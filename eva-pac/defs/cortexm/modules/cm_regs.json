@@ -1,0 +1,34 @@
+{
+    "name": "CM_REGS",
+    "description": "Cortex-M registers",
+    "blocks": [],
+    "bitfields": [
+        {
+            "name": "PRIMASK",
+            "description": "Priority mask register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "PRIMASK",
+                    "description": "Prioritizable interrupt mask",
+                    "bit_offset": 0,
+                    "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "FAULTMASK",
+            "description": "Fault mask register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "FAULTMASK",
+                    "description": "Prioritizable interrupt mask",
+                    "bit_offset": 0,
+                    "bit_size": 1
+                }
+            ]
+        }
+    ],
+    "enums": []
+}

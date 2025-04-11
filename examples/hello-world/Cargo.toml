@@ -1,0 +1,10 @@
+[package]
+name = "eva-hello-world"
+version = "0.1.0"
+edition = "2024"
+authors = ["Davide Mor <tazdevil971@gmail.com>"]
+
+[dependencies]
+# eva-bsp-stm32f767 = { workspace = true }
+eva-bsp-linux = { workspace = true }
+eva-scheduler = { workspace = true }

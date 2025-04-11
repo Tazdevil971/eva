@@ -1,0 +1,51 @@
+{
+    "name": "cm7",
+    "description": "Cortex-m4",
+    "peripherals": [
+        {
+            "name": "SYST",
+            "description": "System Timer",
+            "module": "SYST",
+            "block_name": "SYST",
+            "address": 3758153744
+        },
+        {
+            "name": "SCB",
+            "description": "System Control Block",
+            "module": "SCB",
+            "block_name": "SCB",
+            "address": 3758157056
+        }
+    ],
+    "imports": [
+        {
+            "name": "SCB"
+        },
+        {
+            "name": "SYST"
+        },
+        {
+            "name": "CM_REGS"
+        }
+    ],
+    "cm_ext": {
+        "cm_regs": [
+            {
+                "name": "PRIMASK",
+                "description": "Priority mask register",
+                "module": "CM_REGS",
+                "reg_name": "PRIMASK",
+                "access": "rw",
+                "bitfield_name": "PRIMASK"
+            },
+            {
+                "name": "FAULTMASK",
+                "description": "Fault mask register",
+                "module": "CM_REGS",
+                "reg_name": "FAULTMASK",
+                "access": "rw",
+                "bitfield_name": "FAULTMASK"
+            }
+        ]
+    }
+}

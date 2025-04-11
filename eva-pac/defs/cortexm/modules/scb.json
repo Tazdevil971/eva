@@ -1,0 +1,615 @@
+{
+    "name": "SCB",
+    "description": "System Control Block",
+    "blocks": [
+        {
+            "name": "SCB",
+            "description": "System Control Block",
+            "fields": [
+                {
+                    "name": "CPUID",
+                    "description": "CPUID",
+                    "byte_offset": 0,
+                    "access": "ro",
+                    "bitfield_name": "CPUID"
+                },
+                {
+                    "name": "ICSR",
+                    "description": "Interrupt control and state register",
+                    "byte_offset": 4,
+                    "access": "rw",
+                    "bitfield_name": "ICSR"
+                },
+                {
+                    "name": "VTOR",
+                    "description": "Vector table offset register",
+                    "byte_offset": 8,
+                    "access": "rw",
+                    "bit_size": 32
+                },
+                {
+                    "name": "AIRCR",
+                    "description": "Application interrupt and reset control register",
+                    "byte_offset": 12,
+                    "access": "ro",
+                    "bitfield_name": "AIRCR"
+                },
+                {
+                    "name": "SCR",
+                    "description": "System control register",
+                    "byte_offset": 16,
+                    "access": "rw",
+                    "bitfield_name": "SCR"
+                },
+                {
+                    "name": "CCR",
+                    "description": "Configuration and control register",
+                    "byte_offset": 20,
+                    "access": "rw",
+                    "bitfield_name": "CCR"
+                },
+                {
+                    "name": "SHPR1",
+                    "description": "System handler priority register 1",
+                    "byte_offset": 24,
+                    "access": "rw",
+                    "bitfield_name": "SHPR1"
+                },
+                {
+                    "name": "SHPR2",
+                    "description": "System handler priority register 2",
+                    "byte_offset": 28,
+                    "access": "rw",
+                    "bitfield_name": "SHPR2"
+                },
+                {
+                    "name": "SHPR3",
+                    "description": "System handler priority register 3",
+                    "byte_offset": 32,
+                    "access": "rw",
+                    "bitfield_name": "SHPR3"
+                },
+                {
+                    "name": "SHCRS",
+                    "description": "System handler control and state register",
+                    "byte_offset": 36,
+                    "access": "rw",
+                    "bitfield_name": "SHCRS"
+                },
+                {
+                    "name": "CFSR",
+                    "description": "Configurable fault status register",
+                    "byte_offset": 40,
+                    "access": "rw",
+                    "bitfield_name": "CFSR"
+                },
+                {
+                    "name": "HFSR",
+                    "description": "HardFault status register",
+                    "byte_offset": 44,
+                    "access": "rw",
+                    "bitfield_name": "HFSR"
+                },
+                {
+                    "name": "MMFAR",
+                    "description": "MemManage fault address",
+                    "byte_offset": 52,
+                    "access": "rw",
+                    "bit_size": 32
+                },
+                {
+                    "name": "BFAR",
+                    "description": "BusFault address",
+                    "byte_offset": 56,
+                    "access": "rw",
+                    "bit_size": 32
+                }
+            ]
+        }
+    ],
+    "bitfields": [
+        {
+            "name": "CPUID",
+            "description": "CPUID",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "IMPLEMENTER",
+                    "description": "Implementer code",
+                    "bit_offset": 24,
+                    "bit_size": 8
+                },
+                {
+                    "name": "VARIANT",
+                    "description": "Variant number, the r value in the rnpn product revision identifier",
+                    "bit_offset": 20,
+                    "bit_size": 4
+                },
+                {
+                    "name": "CONSTANT",
+                    "description": "Reads as 0xF",
+                    "bit_offset": 16,
+                    "bit_size": 4
+                },
+                {
+                    "name": "PART_NO",
+                    "description": "Part number of the processor",
+                    "bit_offset": 4,
+                    "bit_size": 12
+                },
+                {
+                    "name": "REVISION",
+                    "description": "Revision number, the p value in the rnpn product revision identifier",
+                    "bit_offset": 0,
+                    "bit_size": 4
+                }
+            ]
+        },
+        {
+            "name": "ICSR",
+            "description": "Interrupt control and state register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "NMIPENDSET",
+                    "description": "NMI set-pending bit",
+                    "bit_offset": 31,
+                    "bit_size": 1
+                },
+                {
+                    "name": "PENDSVSET",
+                    "description": "PendSV set-pending bit",
+                    "bit_offset": 28,
+                    "bit_size": 1
+                },
+                {
+                    "name": "PENDSVCLR",
+                    "description": "PendSV clear-pending bit",
+                    "bit_offset": 27,
+                    "bit_size": 1
+                },
+                {
+                    "name": "PENDSTSET",
+                    "description": "SysTick exception set-pending bit",
+                    "bit_offset": 26,
+                    "bit_size": 1
+                },
+                {
+                    "name": "PENDSTCLR",
+                    "description": "SysTick exception clear-pending bit",
+                    "bit_offset": 25,
+                    "bit_size": 1
+                },
+                {
+                    "name": "ISRPENDING",
+                    "description": "Interrupt pending flag, excluding NMI and Faults",
+                    "bit_offset": 22,
+                    "bit_size": 1
+                },
+                {
+                    "name": "VECTPENDING",
+                    "description": "Indicates the exception number of the highest priority pending enabled exception",
+                    "bit_offset": 12,
+                    "bit_size": 9
+                },
+                {
+                    "name": "RETTOBASE",
+                    "description": "Indicates whether there preempted active exceptions",
+                    "bit_offset": 11,
+                    "bit_size": 1
+                },
+                {
+                    "name": "VECTACTIVE",
+                    "description": "Contains the active exception number",
+                    "bit_offset": 0,
+                    "bit_size": 9
+                }
+            ]
+        },
+        {
+            "name": "AIRCR",
+            "description": "Application interrupt and reset control register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "VECTKEY",
+                    "bit_offset": 16,
+                    "bit_size": 16
+                },
+                {
+                    "name": "ENDIANNESS",
+                    "description": "Data endianness bit",
+                    "bit_offset": 15,
+                    "bit_size": 1
+                },
+                {
+                    "name": "PRIGROUP",
+                    "description": "Interrupt priority grouping field",
+                    "bit_offset": 8,
+                    "bit_size": 3
+                },
+                {
+                    "name": "SYSRESETREQ",
+                    "description": "System reset request",
+                    "bit_offset": 2,
+                    "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "SCR",
+            "description": "System control register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "SEVONPEND",
+                    "description": "Send Event on Pending bit",
+                    "bit_offset": 4,
+                    "bit_size": 1
+                },
+                {
+                    "name": "SLEEPDEEP",
+                    "description": "Controls whether the processor uses sleep or deep sleep as its Low-power mode",
+                    "bit_offset": 2,
+                    "bit_size": 1
+                },
+                {
+                    "name": "SLEEPONEXIT",
+                    "description": "Indicates sleep-on-exit when returning from Handler mode to Thread mode",
+                    "bit_offset": 1,
+                    "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "CCR",
+            "description": "Configuration and control register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "BP",
+                    "description": "Always reads-as-one. It indicates branch prediction is enabled",
+                    "bit_offset": 18,
+                    "bit_size": 1
+                },
+                {
+                    "name": "IC",
+                    "description": "Enables L1 instruction cache",
+                    "bit_offset": 17,
+                    "bit_size": 1
+                },
+                {
+                    "name": "DC",
+                    "description": "Enables L1 data cache",
+                    "bit_offset": 16,
+                    "bit_size": 1
+                },
+                {
+                    "name": "STKALIGN",
+                    "description": "Always reads-as-one. It indicates stack alignment on exception entry is 8-byte aligned",
+                    "bit_offset": 9,
+                    "bit_size": 1
+                },
+                {
+                    "name": "BFHFNMIGN",
+                    "description": "Enables handlers with priority -1 or -2 to ignore data BusFaults caused by load and store instructions",
+                    "bit_offset": 8,
+                    "bit_size": 1
+                },
+                {
+                    "name": "DIV_0_TRP",
+                    "description": "Enables faulting or halting when the processor executes an SDIV or UDIV instruction with a divisor of 0",
+                    "bit_offset": 4,
+                    "bit_size": 1
+                },
+                {
+                    "name": "UNALIGN_TRP",
+                    "description": "Enables unaligned access traps",
+                    "bit_offset": 3,
+                    "bit_size": 1
+                },
+                {
+                    "name": "USERSETMPEND",
+                    "description": "Enables unprivileged software access to the STIR",
+                    "bit_offset": 1,
+                    "bit_size": 1
+                },
+                {
+                    "name": "NONBASETHRDENA",
+                    "description": "Indicates how the processor enters Thread mode",
+                    "bit_offset": 0,
+                    "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "SHPR1",
+            "description": "System handler priority register 1",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "PRI_6",
+                    "description": "Priority of system handler 6, UsageFault",
+                    "bit_offset": 16,
+                    "bit_size": 8
+                },
+                {
+                    "name": "PRI_5",
+                    "description": "Priority of system handler 5, BusFault",
+                    "bit_offset": 8,
+                    "bit_size": 8
+                },
+                {
+                    "name": "PRI_4",
+                    "description": "Priority of system handler 4, MemManage",
+                    "bit_offset": 0,
+                    "bit_size": 8
+                }
+            ]
+        },
+        {
+            "name": "SHPR2",
+            "description": "System handler priority register 2",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "PRI_11",
+                    "description": "Priority of system handler 11, SVCall",
+                    "bit_offset": 24,
+                    "bit_size": 8
+                }
+            ]
+        },
+        {
+            "name": "SHPR3",
+            "description": "System handler priority register 3",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "PRI_15",
+                    "description": "Priority of system handler 15, SysTick exception",
+                    "bit_offset": 24,
+                    "bit_size": 8
+                },
+                {
+                    "name": "PRI_14",
+                    "description": "Priority of system handler 14, PendSV",
+                    "bit_offset": 16,
+                    "bit_size": 8
+                }
+            ]
+        },
+        {
+            "name": "SHCRS",
+            "description": "System handler control and state register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "USGFAULTENA",
+                    "description": "UsageFault enable bit, set to 1 to enable",
+                    "bit_offset": 18,
+                    "bit_size": 1
+                },
+                {
+                    "name": "BUSFAULTENA",
+                    "description": "BusFault enable bit, set to 1 to enable",
+                    "bit_offset": 17,
+                    "bit_size": 1
+                },
+                {
+                    "name": "MEMFAULTENA",
+                    "description": "MemManage enable bit, set to 1 to enable",
+                    "bit_offset": 16,
+                    "bit_size": 1
+                },
+                {
+                    "name": "SVCALLPENDED",
+                    "description": "SVCall pending bit, reads as 1 if exception is pending",
+                    "bit_offset": 15,
+                    "bit_size": 1
+                },
+                {
+                    "name": "BUSFAULTPENDED",
+                    "description": "BusFault exception pending bit, reads as 1 if exception is pending",
+                    "bit_offset": 14,
+                    "bit_size": 1
+                },
+                {
+                    "name": "MEMFAULTPENDED",
+                    "description": "MemManage exception pending bit, reads as 1 if exception is pending",
+                    "bit_offset": 13,
+                    "bit_size": 1
+                },
+                {
+                    "name": "USGFAULTPENDED",
+                    "description": "UsageFault exception pending bit, reads as 1 if exception is pending",
+                    "bit_offset": 12,
+                    "bit_size": 1
+                },
+                {
+                    "name": "SYSTICKACT",
+                    "description": "SysTick exception active bit, reads as 1 if exception is active",
+                    "bit_offset": 11,
+                    "bit_size": 1
+                },
+                {
+                    "name": "PENDSVACT",
+                    "description": "PendSV exception active bit, reads as 1 if exception is active",
+                    "bit_offset": 10,
+                    "bit_size": 1
+                },
+                {
+                    "name": "MONITORACT",
+                    "description": "Debug monitor active bit, reads as 1 if Debug monitor is active",
+                    "bit_offset": 8,
+                    "bit_size": 1
+                },
+                {
+                    "name": "SVCALLACT",
+                    "description": "SVCall active bit, reads as 1 if SVC call is active",
+                    "bit_offset": 7,
+                    "bit_size": 1
+                },
+                {
+                    "name": "USGFAULTACT",
+                    "description": "UsageFault exception active bit, reads as 1 if exception is active",
+                    "bit_offset": 3,
+                    "bit_size": 1
+                },
+                {
+                    "name": "BUSFAULTACT",
+                    "description": "BusFault exception active bit, reads as 1 if exception is active",
+                    "bit_offset": 1,
+                    "bit_size": 1
+                },
+                {
+                    "name": "MEMFAULTACT",
+                    "description": "MemManage exception active bit, reads as 1 if exception is active",
+                    "bit_offset": 0,
+                    "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "CFSR",
+            "description": "Configurable fault status register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "DIVBYZERO",
+                    "description": "Divide by zero UsageFault",
+                    "bit_offset": 25,
+                    "bit_size": 1
+                },
+                {
+                    "name": "UNALIGNED",
+                    "description": "Unaligned access UsageFault",
+                    "bit_offset": 24,
+                    "bit_size": 1
+                },
+                {
+                    "name": "NOCP",
+                    "description": "No coprocessor UsageFault",
+                    "bit_offset": 19,
+                    "bit_size": 1
+                },
+                {
+                    "name": "INVPC",
+                    "description": "Invalid PC load UsageFault, caused by an invalid PC load by EXC_RETURN",
+                    "bit_offset": 18,
+                    "bit_size": 1
+                },
+                {
+                    "name": "INVSTATE",
+                    "description": "Invalid state UsageFault",
+                    "bit_offset": 17,
+                    "bit_size": 1
+                },
+                {
+                    "name": "UNDEFINSTR",
+                    "description": "Undefined instruction UsageFault",
+                    "bit_offset": 16,
+                    "bit_size": 1
+                },
+                {
+                    "name": "BFARVALID",
+                    "description": "BusFault Address register (BFAR) valid flag",
+                    "bit_offset": 15,
+                    "bit_size": 1
+                },
+                {
+                    "name": "LSPERR",
+                    "description": "A bus fault occurred during floating-point lazy state preservation",
+                    "bit_offset": 13,
+                    "bit_size": 1
+                },
+                {
+                    "name": "STKERR",
+                    "description": "BusFault on stacking for exception entry",
+                    "bit_offset": 12,
+                    "bit_size": 1
+                },
+                {
+                    "name": "UNSTKERR",
+                    "description": "BusFault on unstacking for a return from exception",
+                    "bit_offset": 11,
+                    "bit_size": 1
+                },
+                {
+                    "name": "IMPRECISERR",
+                    "description": "Imprecise data bus error",
+                    "bit_offset": 10,
+                    "bit_size": 1
+                },
+                {
+                    "name": "PRECISERR",
+                    "description": "Precise data bus error",
+                    "bit_offset": 9,
+                    "bit_size": 1
+                },
+                {
+                    "name": "IBUSERR",
+                    "description": "Instruction bus error",
+                    "bit_offset": 8,
+                    "bit_size": 1
+                },
+                {
+                    "name": "MMARVALID",
+                    "description": "MemManage Fault Address register (MMFAR) valid flag",
+                    "bit_offset": 7,
+                    "bit_size": 1
+                },
+                {
+                    "name": "MLSPERR",
+                    "description": "A MemManage fault occurred during floating-point lazy state preservation",
+                    "bit_offset": 5,
+                    "bit_size": 1
+                },
+                {
+                    "name": "MSTKERR",
+                    "description": "MemManage fault on stacking for exception entry",
+                    "bit_offset": 4,
+                    "bit_size": 1
+                },
+                {
+                    "name": "MUNSTKERR",
+                    "description": "MemManage fault on unstacking for a return from exception",
+                    "bit_offset": 3,
+                    "bit_size": 1
+                },
+                {
+                    "name": "DACCVIOL",
+                    "description": "Data access violation flag",
+                    "bit_offset": 1,
+                    "bit_size": 1
+                },
+                {
+                    "name": "IACCVIOL",
+                    "description": "Instruction access violation flag",
+                    "bit_offset": 0,
+                    "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "HFSR",
+            "description": "HardFault status register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "FORCED",
+                    "description": "Indicates a forced hard fault",
+                    "bit_offset": 30,
+                    "bit_size": 1
+                },
+                {
+                    "name": "VECTTBL",
+                    "description": "Indicates a BusFault on a vector table read during exception processing",
+                    "bit_offset": 1,
+                    "bit_size": 1
+                }
+            ]
+        }
+    ],
+    "enums": []
+}

@@ -1,0 +1,12 @@
+{
+    "type": "index",
+    "chips": [
+        "chips/cm4.json",
+        "chips/cm7.json"
+    ],
+    "modules": [
+        "modules/cm_regs.json",
+        "modules/scb.json",
+        "modules/syst.json"
+    ]
+}

@@ -1,0 +1,10 @@
+{
+    "name": "cm4",
+    "description": "Cortex-m4",
+    "peripherals": [
+
+    ],
+    "imports": [
+
+    ]
+}
