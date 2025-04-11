@@ -1,0 +1,12 @@
+[env]
+EVA_TARGET_CHIP = "stm32f767zi"
+
+[build]
+target = "../thumbv7em-eva-eabihf.json"
+
+[target.thumbv7em-eva-eabihf]
+runner = "probe-rs run --chip STM32F767ZITx"
+
+[unstable]
+build-std = ["core", "alloc"]
+build-std-features = ["compiler-builtins-mem"]

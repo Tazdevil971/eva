@@ -1,0 +1,11 @@
+[package]
+name = "eva-pac"
+version = "0.1.0"
+edition = "2024"
+authors = ["Davide Mor <tazdevil971@gmail.com>"]
+
+[dependencies]
+eva-config = { workspace = true }
+
+[build-dependencies]
+eva-build = { workspace = true }

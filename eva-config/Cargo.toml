@@ -1,0 +1,9 @@
+[package]
+name = "eva-config"
+version = "0.1.0"
+edition = "2024"
+authors = ["Davide Mor <tazdevil971@gmail.com>"]
+links = "eva_config"
+
+[build-dependencies]
+eva-build = { workspace = true }

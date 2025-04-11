@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+    "eva-pac",
+    "eva-build",
+    "eva-config",
+    "eva-alloc",
+    "eva-scheduler",
+    "eva-bsp",
+    "examples/hello-world"
+]
+
+[workspace.dependencies]
+eva-build = { path = "eva-build" }
+eva-config = { path = "eva-config" }
+eva-pac = { path = "eva-pac" }
+eva-alloc = { path = "eva-alloc" }
+eva-scheduler = { path = "eva-scheduler" }
+eva-bsp = { path = "eva-bsp" }
+
+rtt-target = "0.6.1"
+critical-section = "1.0.0"

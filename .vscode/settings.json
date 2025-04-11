@@ -1,0 +1,7 @@
+{
+    "rust-analyzer.check.allTargets": false,
+    "rust-analyzer.cargo.target": "thumbv7em-eva-eabihf.json",
+    "rust-analyzer.cargo.extraEnv": {
+        "EVA_TARGET_CHIP": "stm32f767zi"
+    }
+}
