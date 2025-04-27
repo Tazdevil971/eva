@@ -3,8 +3,8 @@
 
 extern crate eva_bsp;
 
-use eva_scheduler::mutex::Mutex;
-use eva_scheduler::raw_thread::{self, ThreadParams};
+use eva_scheduler::raw_thread::{self, Priority, ThreadParams};
+use eva_scheduler::sync::mutex::Mutex;
 
 static GLOBAL_VAR: Mutex<u32> = Mutex::new(0);
 
@@ -14,7 +14,7 @@ unsafe extern "C" fn __eva_start() {
 
     let thread = raw_thread::spawn(ThreadParams {
         stack_size: 4096,
-        priority: 0,
+        priority: Priority::MIN,
         entry: other_thread,
         user: 0 as _,
     });
@@ -22,7 +22,7 @@ unsafe extern "C" fn __eva_start() {
     rtt_target::rprintln!("Before lock");
     {
         let mut lock = GLOBAL_VAR.lock();
-        eva_scheduler::raw_thread::preempt();
+        eva_scheduler::raw_thread::yield_now();
         *lock += 1;
         rtt_target::rprintln!("After update");
     }

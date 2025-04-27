@@ -4,7 +4,7 @@ use core::arch::{asm, global_asm};
 use core::mem::size_of;
 use core::ptr::{self, addr_of_mut};
 
-use eva_scheduler::raw_thread::{self, ThreadParams};
+use eva_scheduler::raw_thread::{self, Priority, ThreadParams};
 
 unsafe extern "C" {
     unsafe fn Reset();
@@ -92,16 +92,17 @@ global_asm!(
     ",
     // Perform early system initialization
     "
-    bl __system_init
+    bl {system_init}
     ",
     // Perform kernel initialization
     "
-    bl __kernel_init
-    "
+    bl {kernel_init}
+    ",
+    system_init = sym system_init,
+    kernel_init = sym kernel_init
 );
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn __system_init() {
+unsafe extern "C" fn system_init() {
     unsafe {
         // Enable HSI
         eva_pac::RCC.cr().update(|reg| reg.set_hsion(true));
@@ -137,8 +138,7 @@ unsafe extern "C" fn __system_init() {
     }
 }
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn __kernel_init() {
+unsafe extern "C" fn kernel_init() {
     rtt_target::rtt_init_print!();
     rtt_target::rprintln!("--- EVA BOOTLOG ---");
     rtt_target::rprintln!("-> EVA logger    [online]");
@@ -183,7 +183,7 @@ unsafe extern "C" fn __kernel_init() {
         // Spawn first thread
         raw_thread::spawn(ThreadParams {
             stack_size: 4096,
-            priority: 4,
+            priority: Priority::MIN,
             entry: entrypoint,
             user: 0 as _,
         });
@@ -317,7 +317,7 @@ unsafe impl eva_scheduler::portability::Impl for SchedulerPortabilityImpl {
             asm!(
                 // Install thread switchctx
                 "
-                ldr r3, =EVA_SWITCHCTX
+                ldr r3, ={switchctx}
                 str r0, [r3]
                 ",
                 // Clear the whole stack used so far
@@ -338,6 +338,7 @@ unsafe impl eva_scheduler::portability::Impl for SchedulerPortabilityImpl {
                 blx r2
                 bkpt
                 ",
+                switchctx = sym SWITCHCTX,
                 in("r0") switchctx_ptr,
                 in("r1") stack_ptr,
                 in("r2") entry,
@@ -348,11 +349,11 @@ unsafe impl eva_scheduler::portability::Impl for SchedulerPortabilityImpl {
 
     unsafe fn set_global_switchctx(switchctx_ptr: *mut u8) {
         unsafe {
-            EVA_SWITCHCTX = switchctx_ptr;
+            SWITCHCTX = switchctx_ptr;
         }
     }
 
-    fn preempt() {
+    fn yield_now() {
         unsafe {
             eva_pac::SCB
                 .icsr()
@@ -367,8 +368,7 @@ unsafe extern "C" {
     unsafe fn PendSV();
 }
 
-#[unsafe(no_mangle)]
-static mut EVA_SWITCHCTX: *mut u8 = ptr::null_mut();
+static mut SWITCHCTX: *mut u8 = ptr::null_mut();
 
 global_asm!(
     "
@@ -379,28 +379,29 @@ global_asm!(
     ",
     // Save current context
     "
-    ldr r0, =EVA_SWITCHCTX
+    ldr r0, ={switchctx}
     ldr r0, [r0]
     mrs r1, psp
     stmia r0, {{r1,r4-r11,lr}}
     ",
     // Call into the scheduler
     "
-    bl PendSVImpl
+    bl {schedule}
     ",
     // Restore new context
     "
-    ldr r0, =EVA_SWITCHCTX
+    ldr r0, ={switchctx}
     ldr r0, [r0]
     ldmia r0, {{r1,r4-r11,lr}}
     msr psp, r1
     bx lr
-    "
+    ",
+    switchctx = sym SWITCHCTX,
+    schedule = sym run_scheduler
 );
 
-#[unsafe(no_mangle)]
-unsafe extern "C" fn PendSVImpl() {
+unsafe extern "C" fn run_scheduler() {
     unsafe {
-        eva_scheduler::portability::rotate();
+        eva_scheduler::portability::run_scheduler();
     }
 }

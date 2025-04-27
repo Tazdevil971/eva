@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 
 use crate::scheduler;
 
-pub use scheduler::{ask_for_preempt, is_paused, pause, unpause, with_pause};
+pub use scheduler::{is_paused, pause, unpause, with_pause, yield_later};
 
 #[derive(Debug, Clone, Copy)]
 pub struct PauseToken<'a> {
