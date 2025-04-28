@@ -4,6 +4,10 @@ use super::utils;
 pub mod cm_regs;
 #[path = "../modules/scb.rs"]
 pub mod scb;
+#[path = "../modules/syst.rs"]
+pub mod syst;
+#[doc = "System Timer"]
+pub const SYST: syst::Syst = unsafe { <syst::Syst>::from_ptr(0xe000e010u64 as _) };
 #[doc = "System Control Block"]
 pub const SCB: scb::Scb = unsafe { <scb::Scb>::from_ptr(0xe000ed00u64 as _) };
 #[doc = "Fault mask register"]

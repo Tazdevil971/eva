@@ -1,75 +1,19 @@
 use alloc::alloc::{alloc, dealloc, handle_alloc_error};
 use core::alloc::{Layout, LayoutError};
 use core::cell::Cell;
-use core::mem;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicPtr, Ordering};
+use core::{fmt, mem};
 
-use crate::pause::{PauseMutex, PauseToken, with_pause, yield_later};
-use crate::portability;
-use crate::scheduler;
+use crate::pause::{PauseMutex, PauseToken, with_pause, yield_now_paused};
+use crate::{portability, scheduler};
+
+pub use crate::scheduler::Priority;
 
 /// Thread entrypoint function.
 pub type ThreadFn = unsafe extern "C" fn(*mut ());
 
 const THREAD_STACK_ALIGN: usize = 8;
-
-/// Thread parameters block.
-pub struct ThreadParams {
-    /// Requested minimum stack size.
-    pub stack_size: usize,
-    /// Thread priority after creation.
-    pub priority: Priority,
-    /// Thread entrypoint.
-    pub entry: ThreadFn,
-    /// User pointer, passed to thread entrypoint.
-    pub user: *mut (),
-}
-
-/// Safe wrapper around priority values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[repr(transparent)]
-pub struct Priority(u8);
-
-impl Priority {
-    /// Maximum allowed priority value.
-    pub const MAX: Self = Self(scheduler::MAX_PRIORITY);
-    /// Minimum allowed priority value.
-    pub const MIN: Self = Self(scheduler::MIN_PRIORITY);
-
-    /// Unsafely create a new `Priority`, skipping any validity checks.
-    /// # Safety
-    /// `prio` must be between `MIN` and `MAX` priorities.
-    pub unsafe fn new_unchecked(prio: u8) -> Self {
-        debug_assert!(
-            prio >= scheduler::MIN_PRIORITY && prio <= scheduler::MAX_PRIORITY,
-            "invalid priority"
-        );
-        Self(prio)
-    }
-
-    /// Create a new `Priority`, panics if `prio` is outside the allowed range.
-    pub fn new(prio: u8) -> Self {
-        Self::try_new(prio).expect("Invalid priority value!")
-    }
-
-    /// Create a new `Priority`, returns `None` if `prio` is outside the allowed range.
-    pub fn try_new(prio: u8) -> Option<Self> {
-        if prio >= scheduler::MIN_PRIORITY && prio <= scheduler::MAX_PRIORITY {
-            Some(unsafe {
-                // SAFETY: We just checked that priority is between 0 and 31
-                Self::new_unchecked(prio)
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Retrieve the raw priority value.
-    pub fn value(self) -> u8 {
-        self.0
-    }
-}
 
 /// Internal structure representing thread flags.
 #[derive(Debug)]
@@ -111,11 +55,6 @@ impl Flags {
     /// Set the dead bit.
     pub(crate) fn set_dead(&self, token: PauseToken) {
         self.0.update(token, |val| val | Self::DEAD);
-    }
-
-    /// Clear the dead bit.
-    pub(crate) fn clear_dead(&self, token: PauseToken) {
-        self.0.update(token, |val| val & !Self::DEAD);
     }
 
     /// Query for readiness, so not dead or suspended.
@@ -170,10 +109,6 @@ impl RawThread {
         unsafe { self.0.as_ref() }
     }
 
-    pub(crate) const unsafe fn tcb_mut(&mut self) -> &mut Tcb {
-        unsafe { self.0.as_mut() }
-    }
-
     pub(crate) const fn into_tcb_ptr(thread: Option<RawThread>) -> *mut Tcb {
         match thread {
             Some(thread) => thread.0.as_ptr(),
@@ -190,7 +125,6 @@ impl RawThread {
 }
 
 #[repr(transparent)]
-#[derive(Debug)]
 pub struct AtomicRawThread(AtomicPtr<Tcb>);
 
 impl AtomicRawThread {
@@ -247,6 +181,14 @@ impl AtomicRawThread {
     }
 }
 
+impl fmt::Debug for AtomicRawThread {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("AtomicRawThread")
+            .field(&self.load(Ordering::Relaxed))
+            .finish()
+    }
+}
+
 impl RawThread {
     #[inline(always)]
     pub(crate) unsafe fn link2(token: PauseToken, thread1: RawThread, thread2: RawThread) {
@@ -276,13 +218,6 @@ impl RawThread {
         }
     }
 
-    pub(crate) unsafe fn link_after(self, token: PauseToken, thread: RawThread) {
-        unsafe {
-            let next = thread.tcb().next.get(token);
-            Self::link3(token, thread, self, next);
-        }
-    }
-
     pub(crate) unsafe fn unlink(self, token: PauseToken) -> Option<RawThread> {
         unsafe {
             let prev = self.tcb().prev.get(token);
@@ -298,27 +233,10 @@ impl RawThread {
             }
         }
     }
+}
 
-    pub(crate) unsafe fn link_iter(
-        start: RawThread,
-        token: PauseToken,
-    ) -> impl Iterator<Item = RawThread> {
-        let mut iter = Some(start);
-
-        core::iter::from_fn(move || unsafe {
-            let cur = iter?;
-
-            let next = cur.tcb().next.get(token);
-            if next == start {
-                iter = None;
-            } else {
-                iter = Some(next);
-            }
-
-            Some(cur)
-        })
-    }
-
+impl RawThread {
+    #[allow(unused)] // TODO: Remove this unused
     pub(crate) unsafe fn atomic_link(self, head: &AtomicRawThread) {
         let mut ptr = head.load(Ordering::Acquire);
         loop {
@@ -333,10 +251,12 @@ impl RawThread {
         }
     }
 
+    #[allow(unused)] // TODO: Remove this unused
     pub(crate) unsafe fn atomic_unlink(head: &AtomicRawThread) -> Option<RawThread> {
         head.swap(None, Ordering::AcqRel)
     }
 
+    #[allow(unused)] // TODO: Remove this unused
     pub(crate) unsafe fn atomic_link_iter(
         start: Option<RawThread>,
     ) -> impl Iterator<Item = RawThread> {
@@ -360,7 +280,7 @@ impl RawThread {
         Ok((layout, stack_top_offset, tcb_offset))
     }
 
-    pub(crate) fn create(stack_size: usize) -> Self {
+    pub(crate) fn create(stack_size: usize, priority: Priority) -> Self {
         // Compute the layout of the thread
         let (layout, stack_top_offset, tcb_offset) =
             Self::layout_for(stack_size).expect("Failed to calculate thread size");
@@ -392,7 +312,7 @@ impl RawThread {
             atomic_next: AtomicRawThread::new(None),
             join_wait_thread: PauseMutex::default(),
             flags: Flags::empty(),
-            priority: Priority::new(1),
+            priority,
         };
 
         unsafe {
@@ -415,13 +335,13 @@ impl RawThread {
         }
     }
 
-    unsafe fn set_global_switchctx(self) {
+    pub(crate) unsafe fn set_global_switchctx(self) {
         unsafe {
             portability::set_global_switchctx(self.tcb().stack_top_ptr);
         }
     }
 
-    unsafe fn init_raw(
+    unsafe fn init_switchctx(
         self,
         entry: unsafe extern "C" fn(*mut (), *mut ()) -> !,
         arg1: *mut (),
@@ -440,34 +360,50 @@ impl RawThread {
     }
 
     pub(crate) unsafe fn init(self, entry: ThreadFn, user: *mut ()) {
-        unsafe extern "C" fn thread_entry(arg1: *mut (), arg2: *mut ()) -> ! {
+        unsafe extern "C" fn launcher(arg1: *mut (), arg2: *mut ()) -> ! {
             let entry = unsafe { mem::transmute::<_, ThreadFn>(arg1) };
 
             unsafe {
                 entry(arg2);
             }
 
-            let thread = current();
-
+            // Exit the thread and never come back
             with_pause(|token| unsafe {
-                // Check if someone is waiting
-                if let Some(waiting) = thread.tcb().join_wait_thread.take(token) {
-                    waiting.resume_paused(token);
-                }
-
-                // Terminate this thread
-                thread.tcb().flags.set_dead(token);
-                scheduler::remove_ready_paused(token, thread);
-                // Schedule a preemption as soon as the pause ends
-                yield_later(token);
-            });
-
-            // This will never be reached, as this will never be scheduled
-            unreachable!()
+                current().exit_paused(token);
+            })
         }
 
         unsafe {
-            self.init_raw(thread_entry, entry as _, user);
+            self.init_switchctx(launcher, entry as _, user);
+        }
+    }
+
+    unsafe fn exit_paused(self, token: PauseToken) -> ! {
+        unsafe {
+            debug_assert!(!self.tcb().flags.dead(token), "dead thread is running");
+    
+            // Wake waiting threads, if there is one
+            if let Some(join_wait_thread) = self.tcb().join_wait_thread.take(token) {
+                join_wait_thread.resume_paused(token);
+            }
+    
+            // Set the thread as dead
+            self.tcb().flags.set_dead(token);
+            scheduler::remove_ready_paused(token, self);
+
+            // Yield to never be scheduled again
+            yield_now_paused(token);
+
+            unreachable!()
+        }
+    }
+
+    pub(crate) unsafe fn init_stack_payload<T>(self, value: T) -> *mut () {
+        unsafe {
+            let ptr = self.tcb().base_ptr;
+
+            ptr.cast::<T>().write(value);
+            ptr.cast::<()>()
         }
     }
 
@@ -491,6 +427,18 @@ impl RawThread {
         })
     }
 
+    unsafe fn suspend_paused(self, token: PauseToken) {
+        unsafe {
+            debug_assert!(
+                self.tcb().flags.suspend(token),
+                "suspended thread is running"
+            );
+
+            self.tcb().flags.set_suspend(token);
+            scheduler::remove_ready_paused(token, self);
+        }
+    }
+
     pub unsafe fn resume_paused(self, token: PauseToken) {
         unsafe {
             if self.tcb().flags.suspend(token) {
@@ -500,32 +448,16 @@ impl RawThread {
         }
     }
 
-    pub unsafe fn suspend(self) {
-        with_pause(|token| unsafe {
-            self.suspend_paused(token);
-        })
-    }
-
-    pub unsafe fn suspend_paused(self, token: PauseToken) {
-        unsafe {
-            if !self.tcb().flags.suspend(token) {
-                self.tcb().flags.set_suspend(token);
-                scheduler::remove_ready_paused(token, self);
-            }
-        }
-    }
-
     pub unsafe fn join(self) {
         let current = current();
 
         with_pause(|token| unsafe {
-            if !self.tcb().flags.dead(token) {
+            while !self.tcb().flags.dead(token) {
                 // The thread is still alive and kicking!
                 // Register for wait!
                 self.tcb().join_wait_thread.set(token, Some(current));
-                current.suspend_paused(token);
-                // Yield as soon as the pause ends!
-                yield_later(token);
+
+                suspend_and_yield_paused(token);
             }
         });
 
@@ -542,13 +474,17 @@ impl RawThread {
 
 pub use scheduler::{current, yield_now};
 
-pub fn spawn(params: ThreadParams) -> RawThread {
-    let mut thread = RawThread::create(params.stack_size);
+pub unsafe fn spawn(
+    stack_size: usize,
+    priority: Priority,
+    entry: unsafe extern "C" fn(*mut ()),
+    user: *mut (),
+) -> RawThread {
+    let thread = RawThread::create(stack_size, priority);
 
     unsafe {
         // Initialize the thread initial context and priority
-        thread.init(params.entry, params.user);
-        thread.tcb_mut().priority = params.priority;
+        thread.init(entry, user);
         // Register the thread to the scheduler
         scheduler::add_ready(thread);
     }
@@ -556,14 +492,49 @@ pub fn spawn(params: ThreadParams) -> RawThread {
     thread
 }
 
-pub fn suspend() {
-    unsafe {
-        current().suspend();
+pub fn spawn2<F>(stack_size: usize, priority: Priority, entry: F) -> RawThread
+where
+    F: FnOnce() + Send + Sync,
+{
+    let stack_size = stack_size.max(mem::size_of::<F>() + 512);
+
+    unsafe extern "C" fn launcher<F>(arg: *mut ())
+    where
+        F: FnOnce() + Send + Sync,
+    {
+        // Extract function
+        let entry = unsafe { arg.cast::<F>().read() };
+        // Invoke it
+        (entry)();
     }
+
+    let thread = RawThread::create(stack_size, priority);
+
+    unsafe {
+        // Write the stack payload
+        let user = thread.init_stack_payload(entry);
+        // Initialize the thread initial context and priority
+        thread.init(launcher::<F>, user);
+        // Register the thread to the scheduler
+        scheduler::add_ready(thread);
+    }
+
+    thread
 }
 
-pub fn suspend_paused(token: PauseToken) {
+pub fn suspend_and_yield_paused(token: PauseToken) {
     unsafe {
+        // SAFETY: current() is always a valid thread
         current().suspend_paused(token);
+    }
+    yield_now_paused(token);
+}
+
+pub fn suspend_and_yield_paused_while<F>(token: PauseToken, mut f: F) 
+where
+    F: FnMut() -> bool
+{
+    while f() {
+        suspend_and_yield_paused(token);
     }
 }

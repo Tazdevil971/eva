@@ -1,4 +1,3 @@
-mod linked_list;
 pub mod raw_mutex;
 
 pub mod mutex {

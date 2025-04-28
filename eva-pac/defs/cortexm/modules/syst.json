@@ -1,0 +1,144 @@
+{
+    "name": "SYST",
+    "description": "System timer",
+    "blocks": [
+        {
+            "name": "SYST",
+            "description": "System timer",
+            "fields": [
+                {
+                    "name": "CSR",
+                    "description": "SysTick control and status register",
+                    "byte_offset": 0,
+                    "access": "rw",
+                    "bitfield_name": "CSR"
+                },
+                {
+                    "name": "RVR",
+                    "description": "SysTick reload value register",
+                    "byte_offset": 4,
+                    "access": "rw",
+                    "bitfield_name": "RVR"
+                },
+                {
+                    "name": "CVR",
+                    "description": "SysTick current value register",
+                    "byte_offset": 8,
+                    "access": "rw",
+                    "bitfield_name": "CVR"
+                },
+                {
+                    "name": "CALIB",
+                    "description": "SysTick calibration value register",
+                    "byte_offset": 12,
+                    "access": "ro",
+                    "bitfield_name": "CALIB"
+                }
+            ]
+        }
+    ],
+    "bitfields": [
+        {
+            "name": "CSR",
+            "description": "SysTick control and status register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "COUNTFLAG",
+                    "description": "1 if timer counted to 0 since last time",
+                    "bit_offset": 16,
+                    "bit_size": 1
+                },
+                {
+                    "name": "CLKSOURCE",
+                    "description": "Indicates the clock source",
+                    "bit_offset": 2,
+                    "bit_size": 1,
+                    "enum_name": "CLKSOURCE"
+                },
+                {
+                    "name": "TICKINT",
+                    "description": "Enables SysTick exception request",
+                    "bit_offset": 1,
+                    "bit_size": 1
+                },
+                {
+                    "name": "ENABLE",
+                    "description": "Enable the counter",
+                    "bit_offset": 0,
+                    "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "RVR",
+            "description": "SysTick control and status register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "RELOAD",
+                    "description": "Value to load into the SYST_CVR",
+                    "bit_offset": 0,
+                    "bit_size": 24
+                }
+            ]
+        },
+        {
+            "name": "CVR",
+            "description": "SysTick control and status register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "CURRENT",
+                    "description": "Current value of the SysTick counter",
+                    "bit_offset": 0,
+                    "bit_size": 24
+                }
+            ]
+        },
+        {
+            "name": "CALIB",
+            "description": "SysTick control and status register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "NOREF",
+                    "description": "Indicates whether the device provides a reference clock to the processor",
+                    "bit_offset": 31,
+                    "bit_size": 1
+                },
+                {
+                    "name": "SKEW",
+                    "description": "Indicates whether the TENMS value is exact",
+                    "bit_offset": 30,
+                    "bit_size": 1
+                },
+                {
+                    "name": "TENMS",
+                    "description": "Reload value for 10ms (100Hz) timing",
+                    "bit_offset": 0,
+                    "bit_size": 24
+                }
+            ]
+        }
+    ],
+    "enums": [
+        {
+            "name": "CLKSOURCE",
+            "description": "Indicates the clock source",
+            "bit_size": 1,
+            "variants": [
+                {
+                    "name": "EXTERNAL",
+                    "description": "External clock",
+                    "value": 0
+                },
+                {
+                    "name": "PROCESSOR",
+                    "description": "Processor clock",
+                    "value": 1
+                }
+            ]
+        }
+    ]
+}

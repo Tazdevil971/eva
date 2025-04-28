@@ -1,7 +1,6 @@
 use core::alloc::Layout;
-use core::ptr;
+use core::time::Duration;
 
-use crate::raw_thread::RawThread;
 use crate::scheduler;
 
 /// Trait for implementing various platform specific functionalities.
@@ -30,6 +29,9 @@ pub unsafe trait Impl {
 
     /// Perform a yield operation.
     fn yield_now();
+
+    /// Retrieve time from start of execution.
+    fn get_time() -> Duration;
 }
 
 /// Set the global portability implementation.
@@ -84,6 +86,11 @@ macro_rules! set_portability_impl {
             #[unsafe(no_mangle)]
             fn _eva_scheduler_1_0_yield_now() {
                 <$t as $crate::portability::Impl>::yield_now()
+            }
+            
+            #[unsafe(no_mangle)]
+            fn _eva_scheduler_1_0_get_time() -> ::core::time::Duration {
+                <$t as $crate::portability::Impl>::get_time()
             }
         };
     };
@@ -154,4 +161,12 @@ pub(crate) fn yield_now() {
     unsafe { _eva_scheduler_1_0_yield_now() }
 }
 
-pub use scheduler::{enter, run_scheduler};
+pub(crate) fn get_time() -> Duration {
+    unsafe extern "Rust" {
+        unsafe fn _eva_scheduler_1_0_get_time() -> Duration;
+    }
+
+    unsafe { _eva_scheduler_1_0_get_time() }
+}
+
+pub use scheduler::{enter, scheduler_tick};

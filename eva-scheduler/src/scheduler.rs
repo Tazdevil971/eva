@@ -1,83 +1,22 @@
-use core::cell::{Ref, RefCell, RefMut};
-use core::ptr;
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicU8, Ordering};
+use core::time::Duration;
 
+use crate::linked_list::{LinkedList, Node};
 use crate::pause::{PauseMutex, PauseToken};
 use crate::portability;
-use crate::raw_thread::{AtomicRawThread, Priority, RawThread, ThreadParams};
+use crate::raw_thread::{AtomicRawThread, RawThread};
 
-pub const MIN_PRIORITY: u8 = 0;
-pub const MAX_PRIORITY: u8 = 31;
+pub use crate::prio::Priority;
 
-/// Internal structure representing scheduler pause state
-struct PauseState(AtomicU8);
+pub(crate) const MIN_PRIORITY: u8 = 0;
+pub(crate) const MAX_PRIORITY: u8 = 31;
 
-impl PauseState {
-    /// Bit marking a pending schedule operation.
-    const SCHED_PEND: u8 = 1 << 0;
-    /// Bit marking scheduler pause active.
-    const PAUSED: u8 = 1 << 1;
-    /// Bit marking scheduler offline.
-    const OFFLINE: u8 = 1 << 2;
+const STATE_SCHED_PEND: u8 = 1 << 0;
+const STATE_PAUSED: u8 = 1 << 1;
+const STATE_OFFLINE: u8 = 1 << 2;
 
-    /// Create a new `PauseState` already in offline state.
-    #[inline(always)]
-    const fn offline() -> Self {
-        Self(AtomicU8::new(Self::OFFLINE))
-    }
-
-    #[inline(always)]
-    fn online(&self) {
-        // TODO: Is Relaxed here correct?
-        let old = self.0.fetch_and(!Self::OFFLINE, Ordering::Relaxed);
-    }
-
-    /// Try to set the pause bit. Returns true if successful.
-    #[inline(always)]
-    fn pause(&self) -> bool {
-        // TODO: Is Relaxed here correct?
-        let old = self.0.fetch_or(Self::PAUSED, Ordering::Relaxed);
-        (old & Self::PAUSED) == 0
-    }
-
-    /// Unset the pause and schedule pending bit. Returns true if the schedule pending bit was on.
-    #[inline(always)]
-    fn unpause(&self) -> bool {
-        // TODO: Is Relaxed here correct?
-        let old = self.0.fetch_and(!Self::PAUSED, Ordering::Relaxed);
-        (old & Self::SCHED_PEND) != 0
-    }
-
-    /// Query if either the pause or offline bit are on.
-    #[inline(always)]
-    fn is_paused(&self) -> bool {
-        // TODO: Is Relaxed here correct?
-        let value = self.0.load(Ordering::Relaxed);
-        (value & (Self::PAUSED | Self::OFFLINE)) != 0
-    }
-
-    #[inline(always)]
-    fn is_offline(&self) -> bool {
-        // TODO: Is Relaxed here correct?
-        let value = self.0.load(Ordering::Relaxed);
-        (value & Self::OFFLINE) != 0
-    }
-
-    /// Set the schedule pending bit.
-    #[inline(always)]
-    fn set_sched_pend(&self) {
-        // TODO: Is Relaxed here correct?
-        self.0.fetch_or(Self::SCHED_PEND, Ordering::Relaxed);
-    }
-
-    /// Clear the schedule pending bit.
-    #[inline(always)]
-    fn clear_sched_pend(&self) {
-        // TODO: Is Relaxed here correct?
-        self.0.fetch_and(!Self::SCHED_PEND, Ordering::Relaxed);
-    }
-}
-
+/// Internal mutable thread structure.
 struct Rings {
     /// Bitmask representing queues that are not empty.
     prio_mask: u32,
@@ -85,13 +24,25 @@ struct Rings {
     prio: [Option<RawThread>; 32],
     /// Idle thread.
     idle: Option<RawThread>,
-    // wait: Option<RawThread>,
 }
 
+struct TimeNode {
+    /// Thread to wake up.
+    thread: RawThread,
+    /// When to wake up.
+    when: Duration,
+}
+
+/// Scheduler data structure
 struct Scheduler {
+    /// Thread holding structure.
     rings: PauseMutex<RefCell<Rings>>,
+    /// Current thread.
     cur: AtomicRawThread,
-    state: PauseState,
+    /// Queue of threads to wakeup.
+    time_queue: LinkedList<TimeNode>,
+    /// Thread state bitflags
+    state: AtomicU8,
 }
 
 static SCHEDULER: Scheduler = Scheduler {
@@ -101,35 +52,25 @@ static SCHEDULER: Scheduler = Scheduler {
         idle: None,
     })),
     cur: AtomicRawThread::new(None),
-    state: PauseState::offline(),
+    time_queue: LinkedList::new(),
+    state: AtomicU8::new(STATE_OFFLINE),
 };
 
-/// Internal function to get ring at specific priority.
-fn get_ring_at_prio(rings: &Rings, prio: Priority) -> &Option<RawThread> {
-    unsafe {
-        // SAFETY: prio.value() is guaranteed to be between 0 and 31
-        rings.prio.get_unchecked(prio.value() as usize)
-    }
-}
-
-/// Internal function to get ring at specific priority.
-fn get_ring_at_prio_mut(rings: &mut Rings, prio: Priority) -> &mut Option<RawThread> {
-    unsafe {
-        // SAFETY: prio.value() is guaranteed to be between 0 and 31
-        rings.prio.get_unchecked_mut(prio.value() as usize)
-    }
-}
-
 /// Set the currently active thread.
-unsafe fn set_current_paused(token: PauseToken, thread: RawThread) {
+unsafe fn set_current_paused(_token: PauseToken, thread: RawThread) {
     unsafe {
         // Set the global switch context pointer
         // SAFETY: This can only be called with a paused scheduler
-        portability::set_global_switchctx(thread.tcb().stack_top_ptr);
+        thread.set_global_switchctx();
     }
     // Set the global variable pointing to our thread
     // TODO: Is Relaxed here correct?
     SCHEDULER.cur.store(Some(thread), Ordering::Relaxed);
+}
+
+/// Query the time driver for the current time.
+pub fn get_time() -> Duration {
+    portability::get_time()
 }
 
 /// Query the currently active thread.
@@ -141,17 +82,35 @@ pub fn current() -> RawThread {
         .expect("No current thread, scheduler should not be running!")
 }
 
-/// Try to pause the scheduler. Returns true if successful.
-pub fn pause() -> bool {
-    SCHEDULER.state.pause()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PauseResult {
+    Ok,
+    AlreadyPaused,
+}
+
+/// Try to pause the scheduler.
+pub fn pause() -> PauseResult {
+    let old_state = SCHEDULER.state.fetch_or(STATE_PAUSED, Ordering::SeqCst);
+    match (old_state & STATE_PAUSED) == 0 {
+        true => PauseResult::Ok,
+        false => PauseResult::AlreadyPaused,
+    }
 }
 
 /// Unpause the scheduler.
 /// # Safety
-/// Can only be called when no `PauseToken` instance exist anymore.
+/// - No `PauseToken` instances should exist anymore.
+/// - The scheduler must be in the paused state.
 pub unsafe fn unpause() {
-    if SCHEDULER.state.unpause() {
-        // Someone pended a preemption, do it now
+    debug_assert!(is_paused(), "scheduler not paused");
+
+    // Clear both paused and sched pend
+    let old_state = SCHEDULER
+        .state
+        .fetch_and(!(STATE_PAUSED | STATE_SCHED_PEND), Ordering::SeqCst);
+
+    if (old_state & STATE_SCHED_PEND) != 0 {
+        // If sched pending was set, someone requested a reschedule
         yield_now();
     }
 }
@@ -161,30 +120,30 @@ pub fn with_pause<F, T>(f: F) -> T
 where
     F: FnOnce(PauseToken<'_>) -> T,
 {
-    let ret;
-    let success = pause();
-    {
-        let token = unsafe {
-            // SAFETY: The scheduler is paused here
-            PauseToken::new()
-        };
+    struct Guard;
 
-        ret = f(token);
-    }
-
-    if success {
-        unsafe {
-            // SAFETY: We destroyed our token, so now we can safely unpause
-            unpause();
+    impl Drop for Guard {
+        #[inline(always)]
+        fn drop(&mut self) {
+            unsafe {
+                // SAFETY: We destroyed our token, so now we can safely unpause
+                unpause();
+            }
         }
     }
 
-    ret
-}
+    // Enable the guard only if we actually acquired the pause
+    let _guard = match pause() {
+        PauseResult::Ok => Some(Guard),
+        PauseResult::AlreadyPaused => None,
+    };
 
-/// Yield as soon as the scheduler pause ends.
-pub fn yield_later(_token: PauseToken) {
-    SCHEDULER.state.set_sched_pend();
+    let token = unsafe {
+        // SAFETY: The scheduler is paused here
+        PauseToken::new()
+    };
+
+    f(token)
 }
 
 /// Yield immediately.
@@ -192,30 +151,42 @@ pub fn yield_now() {
     portability::yield_now();
 }
 
-/// Query if the scheduler is paused of offline.
-pub fn is_paused() -> bool {
-    SCHEDULER.state.is_paused()
-}
+/// Yield now from a paused state, first releasing the pause, yielding, and resuming.
+pub fn yield_now_paused(_token: PauseToken) {
+    struct Guard;
 
-/// Query if the scheduler is online
-pub fn is_offline() -> bool {
-    SCHEDULER.state.is_offline()
-}
-
-/// Set the idle thread.
-/// # Safety
-/// - `thread` must be a valid `RawThread`.
-/// - `thread` must not be present in any ready queue.
-unsafe fn set_idle_paused(token: PauseToken, thread: RawThread) {
-    unsafe {
-        // Set idle flag in thread flags
-        // SAFETY: thread is guaranteed to be valid by caller
-        thread.tcb().flags.set_idle(token);
+    impl Drop for Guard {
+        #[inline(always)]
+        fn drop(&mut self) {
+            pause();
+        }
     }
 
-    let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
-    debug_assert!(rings.idle.is_none(), "set_idle can only be called once!");
-    rings.idle = Some(thread);
+    unsafe {
+        // SAFETY: We did not destroy the token, but no code is allowed to access any PauseMutex during the following section
+        unpause();
+    }
+
+    let _guard = Guard;
+    yield_now();
+}
+
+/// Check if the scheduler is running.
+pub fn is_running() -> bool {
+    let state = SCHEDULER.state.load(Ordering::SeqCst);
+    (state & (STATE_OFFLINE | STATE_PAUSED)) == 0
+}
+
+/// Check if the scheduler is paused.
+pub fn is_paused() -> bool {
+    let state = SCHEDULER.state.load(Ordering::SeqCst);
+    (state & STATE_PAUSED) != 0
+}
+
+/// Check if the scheduler is offline.
+pub fn is_offline() -> bool {
+    let state = SCHEDULER.state.load(Ordering::SeqCst);
+    (state & STATE_OFFLINE) != 0
 }
 
 /// Add a thread to the ready queue. Internally acquires a scheduler pause.
@@ -231,9 +202,10 @@ pub(crate) unsafe fn add_ready(thread: RawThread) {
 /// # Safety
 /// - `thread` must be a valid `RawThread`.
 /// - `thread` must not be present in any ready queue.
+/// - `thread` must not be the idle thread.
 pub(crate) unsafe fn add_ready_paused(token: PauseToken, thread: RawThread) {
     debug_assert!(
-        unsafe { !thread.is_idle_paused(token) },
+        unsafe { !thread.tcb().flags.idle(token) },
         "cannot add to ready queue idle thread"
     );
 
@@ -243,7 +215,10 @@ pub(crate) unsafe fn add_ready_paused(token: PauseToken, thread: RawThread) {
     };
 
     let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
-    let mut ring = get_ring_at_prio_mut(&mut rings, prio);
+    let ring = unsafe {
+        // SAFETY: prio.value() is guaranteed to be between 0 and 31
+        rings.prio.get_unchecked_mut(prio.value() as usize)
+    };
     if let Some(ring) = *ring {
         unsafe {
             // SAFETY: thread is guaranteed to be valid by the caller
@@ -252,17 +227,8 @@ pub(crate) unsafe fn add_ready_paused(token: PauseToken, thread: RawThread) {
     } else {
         *ring = Some(thread);
         // This ring was previously empty, also update the mask
-        rings.prio_mask |= (1 << prio.value() as u32);
+        rings.prio_mask |= 1u32 << prio.value();
     }
-}
-
-/// Remove a thread from the ready queue. Internally acquires a scheduler pause.
-/// # Safety
-/// Same as `remove_ready_paused`.
-pub(crate) unsafe fn remove_ready(thread: RawThread) {
-    with_pause(|token| unsafe {
-        remove_ready_paused(token, thread);
-    });
 }
 
 /// Remove a thread from the ready queue. Can only be called with scheduler paused.
@@ -271,7 +237,7 @@ pub(crate) unsafe fn remove_ready(thread: RawThread) {
 /// - `thread` must be present in its respective ready queue.
 pub(crate) unsafe fn remove_ready_paused(token: PauseToken, thread: RawThread) {
     debug_assert!(
-        unsafe { !thread.is_idle_paused(token) },
+        unsafe { !thread.tcb().flags.idle(token) },
         "cannot remove from ready queue idle thread"
     );
 
@@ -286,35 +252,29 @@ pub(crate) unsafe fn remove_ready_paused(token: PauseToken, thread: RawThread) {
     };
 
     let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
-    let mut ring = get_ring_at_prio_mut(&mut rings, prio);
+    let ring = unsafe {
+        // SAFETY: prio.value() is guaranteed to be between 0 and 31
+        rings.prio.get_unchecked_mut(prio.value() as usize)
+    };
+
     if *ring == Some(thread) {
         // This thread WAS the head, update the head!
         *ring = next;
 
         if next.is_none() {
             // The queue is actually empty now, update the mask
-            rings.prio_mask &= !(1 << prio.value() as u32);
+            rings.prio_mask &= !(1u32 << prio.value());
         }
     }
 }
 
-/// Runs the main scheduling algorithm, respects scheduler pauses.
-/// # Safety
-/// Non preemption must be guaranteed externally by the caller.
-pub unsafe fn run_scheduler() {
-    if SCHEDULER.state.is_paused() {
-        SCHEDULER.state.set_sched_pend();
-        return;
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimedResult {
+    Other,
+    Timeout,
+}
 
-    let token = unsafe {
-        // SAFETY: This is the scheduler function, so we can safely access scheduler data structures
-        PauseToken::new()
-    };
-
-    // We are currently running the scheduler, clear any pending reschedule
-    SCHEDULER.state.clear_sched_pend();
-
+fn run_scheduler_paused(token: PauseToken) {
     let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
     let ready = if rings.prio_mask == 0 {
         // The priority mask is empty, no thread is ready, just return the idle one
@@ -325,17 +285,18 @@ pub unsafe fn run_scheduler() {
         }
     } else {
         // Find the highest priority non empty queue
-        let prio = (31 - rings.prio_mask.leading_zeros() as u8);
-        let prio = unsafe {
+        let prio = (31 - rings.prio_mask.leading_zeros()) as u8;
+
+        let ring = unsafe {
             debug_assert!(
                 prio >= MIN_PRIORITY && prio <= MAX_PRIORITY,
-                "invalid priority in prio_mask"
+                "invalid prio mask"
             );
-            // SAFETY: prio will always be between 0 and 31
-            Priority::new_unchecked(prio)
+            // SAFETY: prio is always between 0 and 31
+            rings.prio.get_unchecked_mut(prio as usize)
         };
 
-        let ring = get_ring_at_prio_mut(&mut rings, prio);
+        // Retrieve the head
         let ready = unsafe {
             debug_assert!(
                 ring.is_some(),
@@ -345,8 +306,13 @@ pub unsafe fn run_scheduler() {
             ring.unwrap_unchecked()
         };
 
-        let ready = unsafe { ready.tcb().next.get(token) };
+        // Rotate the queue to get the next
+        let ready = unsafe {
+            // SAFETY: The thread is ready, so it must be valid
+            ready.tcb().next.get(token)
+        };
 
+        // Set the new head
         *ring = Some(ready);
         ready
     };
@@ -360,6 +326,39 @@ pub unsafe fn run_scheduler() {
         // SAFETY: ready will always be a valid RawThread, freed thread will always be removed from the respective queue
         set_current_paused(token, ready);
     }
+}
+
+/// Runs the main scheduling algorithm, respects scheduler pauses.
+/// # Safety
+/// Non preemption must be guaranteed externally by the caller.
+pub unsafe fn scheduler_tick() {
+    let state = SCHEDULER.state.load(Ordering::SeqCst);
+
+    if (state & (STATE_OFFLINE | STATE_PAUSED)) != 0 {
+        // The scheduler is either offline or paused
+        // If the scheduler was just paused, pend a schedule
+        if (state & STATE_PAUSED) != 0 {
+            SCHEDULER.state.fetch_or(STATE_SCHED_PEND, Ordering::SeqCst);
+        }
+
+        return;
+    }
+
+    // Set the scheduler paused flag
+    SCHEDULER.state.fetch_or(STATE_PAUSED, Ordering::SeqCst);
+
+    let token = unsafe {
+        // SAFETY: This is the scheduler function, so we can safely access scheduler data structures
+        PauseToken::new()
+    };
+
+    // run_time_events_paused(token);
+    run_scheduler_paused(token);
+
+    // We are finished, clear scheduler paused and pending bit
+    SCHEDULER
+        .state
+        .fetch_and(!(STATE_PAUSED | STATE_SCHED_PEND), Ordering::SeqCst);
 }
 
 /// Enter the scheduler, should only be called with the kernel paused.
@@ -377,7 +376,7 @@ pub unsafe fn enter() -> ! {
         idle_task()
     }
 
-    let thread = RawThread::create(IDLE_STACK);
+    let idle = RawThread::create(IDLE_STACK, Priority::MIN);
 
     {
         let token = unsafe {
@@ -386,18 +385,26 @@ pub unsafe fn enter() -> ! {
         };
 
         unsafe {
-            // Set this new thread as the idle one
-            set_idle_paused(token, thread);
+            // Set idle flag in thread flags
+            // SAFETY: thread is valid.
+            idle.tcb().flags.set_idle(token);
+        }
+
+        // Set the newly created thread as the idle one
+        SCHEDULER.rings.borrow_ref_mut(token).idle = Some(idle);
+
+        unsafe {
             // Set this thread as the current one, as we are about to run it
-            set_current_paused(token, thread);
+            set_current_paused(token, idle);
         }
     }
 
+    // Bring the scheduler online
+    SCHEDULER.state.fetch_and(!STATE_OFFLINE, Ordering::SeqCst);
+
     unsafe {
-        // Bring the scheduler online
-        SCHEDULER.state.online();
         // Enter the thread
-        thread.enter_first_thread(idle_entry)
+        idle.enter_first_thread(idle_entry)
     }
 }
 

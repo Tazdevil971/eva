@@ -1,9 +1,7 @@
-use core::cell::Cell;
-use core::pin::{Pin, pin};
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use super::linked_list::{LinkedList, Node};
-use crate::pause::{PauseMutex, with_pause, yield_later};
+use crate::linked_list::{LinkedList, Node};
+use crate::pause::with_pause;
 use crate::raw_thread::{self, RawThread};
 
 struct MutexNode {
@@ -20,39 +18,36 @@ unsafe impl lock_api::RawMutex for RawMutex {
 
     const INIT: Self = Self {
         locked: AtomicBool::new(false),
-        wait_queue: LinkedList::empty(),
+        wait_queue: LinkedList::new(),
     };
 
     fn lock(&self) {
-        if !self.try_lock() {
-            let node = Node::new(MutexNode {
-                thread: raw_thread::current(),
-            });
+        with_pause(|token| {
+            // First try to lock the mutex normally
+            if self.try_lock() {
+                return;
+            }
 
-            let node = pin!(node);
-            let node = node.into_ref();
+            // We didn't succeed, fall back to wait list
+            Node::new(
+                MutexNode {
+                    thread: raw_thread::current(),
+                },
+                |node| {
+                    unsafe {
+                        // LIFO wake priority
+                        // SAFETY: We guarantee that node will be unlinked before returning
+                        self.wait_queue.push_front(token, node);
+                    }
 
-            let wait_queue = unsafe { Pin::new_unchecked(&self.wait_queue) };
-
-            // We failed to lock, use to the slow path
-            while with_pause(|token| {
-                if self.try_lock() {
-                    // Make sure the node is unlinked
-                    node.try_remove(token);
-                    return false;
-                }
-
-                // The node is not yet linked
-                if !node.is_linked(token) {
-                    wait_queue.push_back(token, node);
-                }
-
-                raw_thread::suspend_paused(token);
-                yield_later(token);
-
-                true
-            }) {}
-        }
+                    // Suspend while the node is linked
+                    raw_thread::suspend_and_yield_paused_while(token, || unsafe {
+                        // SAFETY: node is either unlinked or linked to this queue
+                        self.wait_queue.is_linked(token, node)
+                    });
+                },
+            );
+        });
     }
 
     fn try_lock(&self) -> bool {
@@ -63,18 +58,21 @@ unsafe impl lock_api::RawMutex for RawMutex {
 
     unsafe fn unlock(&self) {
         with_pause(|token| {
-            // Find the thread with the highest priority and wake him up
-            let to_wake = self
-                .wait_queue
-                .iter(token)
-                .max_by_key(|node| unsafe { node.value().thread.priority() });
+            let to_wake = unsafe {
+                // SAFETY: This node won't escape the pause, and we don't yield
+                self.wait_queue.pop_back(token)
+            };
 
             if let Some(to_wake) = to_wake {
-                to_wake.try_remove(token);
-                unsafe { to_wake.value().thread.resume_paused(token) };
+                // Ok someone was waiting, wake him but DON'T unlock the mutex
+                unsafe {
+                    // SAFETY: If a thread is inside the queue, it is waiting and valid
+                    to_wake.value().thread.resume_paused(token);
+                }
+            } else {
+                // No one to wake, just release the lock
+                self.locked.store(false, Ordering::SeqCst);
             }
-
-            self.locked.store(false, Ordering::SeqCst);
         })
     }
 

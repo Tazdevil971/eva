@@ -1,15 +1,21 @@
 #![no_std]
-// TODO: remove this line
-#![allow(unused)]
 
 extern crate alloc;
 
-pub mod portability;
-pub mod raw_thread;
-pub mod scheduler;
-pub mod sync;
+/// On-stack linked list.
+mod linked_list;
 
+/// Scheduler pause primitives.
 pub mod pause;
-
-// pub mod mutex;
-// pub mod wait_queue;
+/// Portability interface.
+pub mod portability;
+/// Priority primitives.
+pub mod prio;
+/// Scheduler interface.
+pub mod scheduler;
+/// Low level threading interface.
+pub mod raw_thread;
+// /// High level safe thread wrapper.
+// pub mod thread;
+/// Synchronization primitives.
+pub mod sync;

@@ -3,6 +3,13 @@
     "description": "Cortex-m4",
     "peripherals": [
         {
+            "name": "SYST",
+            "description": "System Timer",
+            "module": "SYST",
+            "block_name": "SYST",
+            "address": 3758153744
+        },
+        {
             "name": "SCB",
             "description": "System Control Block",
             "module": "SCB",
@@ -13,6 +20,9 @@
     "imports": [
         {
             "name": "SCB"
+        },
+        {
+            "name": "SYST"
         },
         {
             "name": "CM_REGS"

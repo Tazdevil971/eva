@@ -3,8 +3,10 @@ use core::alloc::Layout;
 use core::arch::{asm, global_asm};
 use core::mem::size_of;
 use core::ptr::{self, addr_of_mut};
+use core::sync::atomic::{AtomicU32, Ordering};
+use core::time::Duration;
 
-use eva_scheduler::raw_thread::{self, Priority, ThreadParams};
+use eva_scheduler::raw_thread::{self, Priority};
 
 unsafe extern "C" {
     unsafe fn Reset();
@@ -14,7 +16,6 @@ unsafe extern "C" {
     unsafe fn BusFault();
     unsafe fn UsageFault();
     unsafe fn SVCall();
-    unsafe fn SysTick();
 }
 
 #[repr(C)]
@@ -165,6 +166,33 @@ unsafe extern "C" fn kernel_init() {
         }
     }
 
+    // Initialize systick
+    {
+        unsafe {
+            // Retrieve the reload value for tenms
+            let tenms = eva_pac::SYST.calib().read().tenms();
+
+            // Setup reload value
+            eva_pac::SYST.rvr().write({
+                use eva_pac::syst::fields::Rvr;
+
+                Rvr::default().set_reload(tenms / 10)
+            });
+
+            // Final configuration and timer start
+            eva_pac::SYST.csr().write({
+                use eva_pac::syst::fields::Csr;
+                use eva_pac::syst::vals::Clksource;
+
+                Csr::default()
+                    .set_countflag(false)
+                    .set_clksource(Clksource::Processor)
+                    .set_tickint(true)
+                    .set_enable(true)
+            });
+        }
+    }
+
     {
         unsafe extern "C" fn entrypoint(_: *mut ()) {
             unsafe extern "C" {
@@ -180,19 +208,25 @@ unsafe extern "C" fn kernel_init() {
 
         rtt_target::rprint!("-> EVA scheduler ");
 
-        // Spawn first thread
-        raw_thread::spawn(ThreadParams {
-            stack_size: 4096,
-            priority: Priority::MIN,
-            entry: entrypoint,
-            user: 0 as _,
-        });
-
         unsafe {
+            // Spawn first thread
+            raw_thread::spawn(4096, Priority::MIN, entrypoint, 0 as _);
+
             // Launch the scheduler
             eva_scheduler::portability::enter();
         }
     }
+}
+
+#[macro_export]
+macro_rules! eva_main {
+    ($name:expr) => {
+        #[unsafe(no_mangle)]
+        unsafe extern "C" fn __eva_start() {
+            const MAIN: fn() = $name;
+            (MAIN)();
+        }
+    };
 }
 
 #[unsafe(no_mangle)]
@@ -360,6 +394,10 @@ unsafe impl eva_scheduler::portability::Impl for SchedulerPortabilityImpl {
                 .write(eva_pac::scb::fields::Icsr::default().set_pendsvset(true));
         }
     }
+
+    fn get_time() -> Duration {
+        Duration::from_millis(TICKS.load(Ordering::SeqCst) as _)
+    }
 }
 
 eva_scheduler::set_portability_impl!(SchedulerPortabilityImpl);
@@ -397,11 +435,18 @@ global_asm!(
     bx lr
     ",
     switchctx = sym SWITCHCTX,
-    schedule = sym run_scheduler
+    schedule = sym scheduler_tick
 );
 
-unsafe extern "C" fn run_scheduler() {
+unsafe extern "C" fn scheduler_tick() {
     unsafe {
-        eva_scheduler::portability::run_scheduler();
+        eva_scheduler::portability::scheduler_tick();
     }
+}
+
+static TICKS: AtomicU32 = AtomicU32::new(0);
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn SysTick() {
+    TICKS.fetch_add(1, Ordering::SeqCst);
 }
