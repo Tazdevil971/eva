@@ -72,6 +72,7 @@ dependencies = [
  "eva-config",
  "lock_api",
  "rtt-target",
+ "scopeguard",
 ]
 
 [[package]]

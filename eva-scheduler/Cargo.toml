@@ -8,6 +8,7 @@ authors = ["Davide Mor <tazdevil971@gmail.com>"]
 eva-config = { workspace = true }
 critical-section = { workspace = true }
 lock_api = "0.4"
+scopeguard = { version = "1.2", default-features = false }
 rtt-target = { workspace = true }
 
 [build-dependencies]

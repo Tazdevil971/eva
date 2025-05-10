@@ -125,7 +125,7 @@ impl<T> LinkedList<T> {
     /// Check if a given node is linked to this list.
     /// # Safety
     /// The provided node must be either unlinked or linked to **this** list.
-    pub unsafe fn is_linked(&self, token: PauseToken, node: Pin<&Node<T>>) -> bool {
+    pub unsafe fn contains(&self, token: PauseToken, node: Pin<&Node<T>>) -> bool {
         unsafe {
             // SAFETY: The scheduler is paused so we have access to all the nodes in this scope
             self.front(token)
@@ -220,26 +220,6 @@ impl<T> LinkedList<T> {
         self.link_prev(token, next, prev);
     }
 
-    /// Remove a node from the list, failing if the node is not linked.
-    /// # Safety
-    /// The provided node must be either unlinked or linked to **this** list.
-    pub unsafe fn try_remove(&self, token: PauseToken, node: Pin<&Node<T>>) -> bool {
-        let is_linked = unsafe {
-            // SAFETY: The caller must ensure the node is unlinked or linked to this list
-            self.is_linked(token, node)
-        };
-
-        if is_linked {
-            unsafe {
-                // SAFETY: We just checked that node was in fact linked
-                self.remove(token, node);
-            }
-            true
-        } else {
-            false
-        }
-    }
-
     /// Insert a node after another one
     /// # Safety
     /// - `prev` must be linked to this exact linked list.
@@ -283,6 +263,7 @@ impl<T> LinkedList<T> {
     }
 
     /// Insert a node, keeping the list sorted by the given key.
+    /// Nodes with matching keys are ordered in from right to left, in order of insertion.
     /// # Safety
     /// `node` must be removed before being dropped.
     pub unsafe fn insert_sorted_by_key<K, F>(

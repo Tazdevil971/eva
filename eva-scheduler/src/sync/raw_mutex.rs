@@ -43,7 +43,7 @@ unsafe impl lock_api::RawMutex for RawMutex {
                     // Suspend while the node is linked
                     raw_thread::suspend_and_yield_paused_while(token, || unsafe {
                         // SAFETY: node is either unlinked or linked to this queue
-                        self.wait_queue.is_linked(token, node)
+                        self.wait_queue.contains(token, node)
                     });
                 },
             );
