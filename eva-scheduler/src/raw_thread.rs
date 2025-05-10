@@ -5,7 +5,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 use core::{fmt, mem};
 
-use crate::pause::{PauseMutex, PauseToken, with_pause, yield_now_paused};
+use crate::pause::{PauseMutex, PauseToken, with_pause, yield_now_from_paused};
 use crate::{portability, scheduler};
 
 pub use crate::scheduler::Priority;
@@ -381,18 +381,18 @@ impl RawThread {
     unsafe fn exit_paused(self, token: PauseToken) -> ! {
         unsafe {
             debug_assert!(!self.tcb().flags.dead(token), "dead thread is running");
-    
+
             // Wake waiting threads, if there is one
             if let Some(join_wait_thread) = self.tcb().join_wait_thread.take(token) {
                 join_wait_thread.resume_paused(token);
             }
-    
+
             // Set the thread as dead
             self.tcb().flags.set_dead(token);
             scheduler::remove_ready_paused(token, self);
 
             // Yield to never be scheduled again
-            yield_now_paused(token);
+            yield_now_from_paused(token);
 
             unreachable!()
         }
@@ -452,12 +452,22 @@ impl RawThread {
         let current = current();
 
         with_pause(|token| unsafe {
-            while !self.tcb().flags.dead(token) {
-                // The thread is still alive and kicking!
-                // Register for wait!
-                self.tcb().join_wait_thread.set(token, Some(current));
+            if self.tcb().flags.dead(token) {
+                // The thread is already dead
+                return;
+            }
 
+            // The thread is still alive and kicking!
+            // Register for wait!
+            self.tcb().join_wait_thread.set(token, Some(current));
+
+            loop {
+                // Wait for someone to wake us
                 suspend_and_yield_paused(token);
+                // Check if the thread is dead, do this to avoid spurious wakeups
+                if self.tcb().flags.dead(token) {
+                    break;
+                }
             }
         });
 
@@ -472,7 +482,12 @@ impl RawThread {
     }
 }
 
-pub use scheduler::{current, yield_now};
+/// Yield immediately.
+pub fn yield_now() {
+    portability::yield_now();
+}
+
+pub use crate::scheduler::current;
 
 pub unsafe fn spawn(
     stack_size: usize,
@@ -527,14 +542,5 @@ pub fn suspend_and_yield_paused(token: PauseToken) {
         // SAFETY: current() is always a valid thread
         current().suspend_paused(token);
     }
-    yield_now_paused(token);
-}
-
-pub fn suspend_and_yield_paused_while<F>(token: PauseToken, mut f: F) 
-where
-    F: FnMut() -> bool
-{
-    while f() {
-        suspend_and_yield_paused(token);
-    }
+    yield_now_from_paused(token);
 }

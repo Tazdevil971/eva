@@ -1,20 +1,15 @@
 use core::cell::RefCell;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::Ordering;
 use core::time::Duration;
 
-use crate::linked_list::{LinkedList, Node};
-use crate::pause::{PauseMutex, PauseToken};
+use crate::pause::{run_if_paused_or_pend, with_pause, PauseMutex, PauseToken};
 use crate::portability;
-use crate::raw_thread::{AtomicRawThread, RawThread};
+use crate::raw_thread::{AtomicRawThread, RawThread, self};
 
 pub use crate::prio::Priority;
 
 pub(crate) const MIN_PRIORITY: u8 = 0;
 pub(crate) const MAX_PRIORITY: u8 = 31;
-
-const STATE_SCHED_PEND: u8 = 1 << 0;
-const STATE_PAUSED: u8 = 1 << 1;
-const STATE_OFFLINE: u8 = 1 << 2;
 
 /// Internal mutable thread structure.
 struct Rings {
@@ -26,23 +21,12 @@ struct Rings {
     idle: Option<RawThread>,
 }
 
-struct TimeNode {
-    /// Thread to wake up.
-    thread: RawThread,
-    /// When to wake up.
-    when: Duration,
-}
-
 /// Scheduler data structure
 struct Scheduler {
     /// Thread holding structure.
     rings: PauseMutex<RefCell<Rings>>,
     /// Current thread.
     cur: AtomicRawThread,
-    /// Queue of threads to wakeup.
-    time_queue: LinkedList<TimeNode>,
-    /// Thread state bitflags
-    state: AtomicU8,
 }
 
 static SCHEDULER: Scheduler = Scheduler {
@@ -52,8 +36,6 @@ static SCHEDULER: Scheduler = Scheduler {
         idle: None,
     })),
     cur: AtomicRawThread::new(None),
-    time_queue: LinkedList::new(),
-    state: AtomicU8::new(STATE_OFFLINE),
 };
 
 /// Set the currently active thread.
@@ -68,11 +50,6 @@ unsafe fn set_current_paused(_token: PauseToken, thread: RawThread) {
     SCHEDULER.cur.store(Some(thread), Ordering::Relaxed);
 }
 
-/// Query the time driver for the current time.
-pub fn get_time() -> Duration {
-    portability::get_time()
-}
-
 /// Query the currently active thread.
 pub fn current() -> RawThread {
     // TODO: Is Relaxed here correct?
@@ -80,113 +57,6 @@ pub fn current() -> RawThread {
         .cur
         .load(Ordering::Relaxed)
         .expect("No current thread, scheduler should not be running!")
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PauseResult {
-    Ok,
-    AlreadyPaused,
-}
-
-/// Try to pause the scheduler.
-pub fn pause() -> PauseResult {
-    let old_state = SCHEDULER.state.fetch_or(STATE_PAUSED, Ordering::SeqCst);
-    match (old_state & STATE_PAUSED) == 0 {
-        true => PauseResult::Ok,
-        false => PauseResult::AlreadyPaused,
-    }
-}
-
-/// Unpause the scheduler.
-/// # Safety
-/// - No `PauseToken` instances should exist anymore.
-/// - The scheduler must be in the paused state.
-pub unsafe fn unpause() {
-    debug_assert!(is_paused(), "scheduler not paused");
-
-    // Clear both paused and sched pend
-    let old_state = SCHEDULER
-        .state
-        .fetch_and(!(STATE_PAUSED | STATE_SCHED_PEND), Ordering::SeqCst);
-
-    if (old_state & STATE_SCHED_PEND) != 0 {
-        // If sched pending was set, someone requested a reschedule
-        yield_now();
-    }
-}
-
-/// Enter a critical section using a scheduler pause.
-pub fn with_pause<F, T>(f: F) -> T
-where
-    F: FnOnce(PauseToken<'_>) -> T,
-{
-    struct Guard;
-
-    impl Drop for Guard {
-        #[inline(always)]
-        fn drop(&mut self) {
-            unsafe {
-                // SAFETY: We destroyed our token, so now we can safely unpause
-                unpause();
-            }
-        }
-    }
-
-    // Enable the guard only if we actually acquired the pause
-    let _guard = match pause() {
-        PauseResult::Ok => Some(Guard),
-        PauseResult::AlreadyPaused => None,
-    };
-
-    let token = unsafe {
-        // SAFETY: The scheduler is paused here
-        PauseToken::new()
-    };
-
-    f(token)
-}
-
-/// Yield immediately.
-pub fn yield_now() {
-    portability::yield_now();
-}
-
-/// Yield now from a paused state, first releasing the pause, yielding, and resuming.
-pub fn yield_now_paused(_token: PauseToken) {
-    struct Guard;
-
-    impl Drop for Guard {
-        #[inline(always)]
-        fn drop(&mut self) {
-            pause();
-        }
-    }
-
-    unsafe {
-        // SAFETY: We did not destroy the token, but no code is allowed to access any PauseMutex during the following section
-        unpause();
-    }
-
-    let _guard = Guard;
-    yield_now();
-}
-
-/// Check if the scheduler is running.
-pub fn is_running() -> bool {
-    let state = SCHEDULER.state.load(Ordering::SeqCst);
-    (state & (STATE_OFFLINE | STATE_PAUSED)) == 0
-}
-
-/// Check if the scheduler is paused.
-pub fn is_paused() -> bool {
-    let state = SCHEDULER.state.load(Ordering::SeqCst);
-    (state & STATE_PAUSED) != 0
-}
-
-/// Check if the scheduler is offline.
-pub fn is_offline() -> bool {
-    let state = SCHEDULER.state.load(Ordering::SeqCst);
-    (state & STATE_OFFLINE) != 0
 }
 
 /// Add a thread to the ready queue. Internally acquires a scheduler pause.
@@ -268,13 +138,7 @@ pub(crate) unsafe fn remove_ready_paused(token: PauseToken, thread: RawThread) {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimedResult {
-    Other,
-    Timeout,
-}
-
-fn run_scheduler_paused(token: PauseToken) {
+pub(crate) fn run_scheduler_paused(token: PauseToken) {
     let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
     let ready = if rings.prio_mask == 0 {
         // The priority mask is empty, no thread is ready, just return the idle one
@@ -332,44 +196,15 @@ fn run_scheduler_paused(token: PauseToken) {
 /// # Safety
 /// Non preemption must be guaranteed externally by the caller.
 pub unsafe fn scheduler_tick() {
-    let state = SCHEDULER.state.load(Ordering::SeqCst);
-
-    if (state & (STATE_OFFLINE | STATE_PAUSED)) != 0 {
-        // The scheduler is either offline or paused
-        // If the scheduler was just paused, pend a schedule
-        if (state & STATE_PAUSED) != 0 {
-            SCHEDULER.state.fetch_or(STATE_SCHED_PEND, Ordering::SeqCst);
-        }
-
-        return;
-    }
-
-    // Set the scheduler paused flag
-    SCHEDULER.state.fetch_or(STATE_PAUSED, Ordering::SeqCst);
-
-    let token = unsafe {
-        // SAFETY: This is the scheduler function, so we can safely access scheduler data structures
-        PauseToken::new()
-    };
-
-    // run_time_events_paused(token);
-    run_scheduler_paused(token);
-
-    // We are finished, clear scheduler paused and pending bit
-    SCHEDULER
-        .state
-        .fetch_and(!(STATE_PAUSED | STATE_SCHED_PEND), Ordering::SeqCst);
+    run_if_paused_or_pend(|token| {
+        run_scheduler_paused(token);
+    });
 }
 
 /// Enter the scheduler, should only be called with the kernel paused.
 /// # Safety
 /// Can only be called once, during boot.
 pub unsafe fn enter() -> ! {
-    debug_assert!(
-        is_offline(),
-        "the scheduler can only be entered if it is offline"
-    );
-
     const IDLE_STACK: usize = 4096;
 
     unsafe extern "C" fn idle_entry() -> ! {
@@ -399,9 +234,6 @@ pub unsafe fn enter() -> ! {
         }
     }
 
-    // Bring the scheduler online
-    SCHEDULER.state.fetch_and(!STATE_OFFLINE, Ordering::SeqCst);
-
     unsafe {
         // Enter the thread
         idle.enter_first_thread(idle_entry)
@@ -411,6 +243,6 @@ pub unsafe fn enter() -> ! {
 /// Internal function to run inside the idle thread.
 fn idle_task() -> ! {
     loop {
-        yield_now();
+        raw_thread::yield_now();
     }
 }

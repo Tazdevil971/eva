@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::linked_list::{LinkedList, Node};
-use crate::pause::with_pause;
+use crate::pause::{pend_yield, with_pause};
 use crate::raw_thread::{self, RawThread};
 
 struct MutexNode {
@@ -40,11 +40,16 @@ unsafe impl lock_api::RawMutex for RawMutex {
                         self.wait_queue.push_front(token, node);
                     }
 
-                    // Suspend while the node is linked
-                    raw_thread::suspend_and_yield_paused_while(token, || unsafe {
-                        // SAFETY: node is either unlinked or linked to this queue
-                        self.wait_queue.is_linked(token, node)
-                    });
+                    loop {
+                        raw_thread::suspend_and_yield_paused(token);
+                    
+                        if unsafe {
+                            // SAFETY: node is either unlinked or linked to this queue
+                            !self.wait_queue.contains(token, node)
+                        } {
+                            break;
+                        }
+                    }
                 },
             );
         });
@@ -64,16 +69,23 @@ unsafe impl lock_api::RawMutex for RawMutex {
             };
 
             if let Some(to_wake) = to_wake {
+                let to_wake = to_wake.value();
+
                 // Ok someone was waiting, wake him but DON'T unlock the mutex
                 unsafe {
                     // SAFETY: If a thread is inside the queue, it is waiting and valid
-                    to_wake.value().thread.resume_paused(token);
+                    to_wake.thread.resume_paused(token);
+
+                    // We should reschedule ONLY if the current priority is strictly lower than the new thread!
+                    if raw_thread::current().priority() < to_wake.thread.priority() {
+                        pend_yield(token);
+                    }
                 }
             } else {
                 // No one to wake, just release the lock
                 self.locked.store(false, Ordering::SeqCst);
             }
-        })
+        });
     }
 
     fn is_locked(&self) -> bool {
