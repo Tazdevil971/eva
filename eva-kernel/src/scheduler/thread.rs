@@ -9,11 +9,11 @@ use crate::portability::{self, Impl as _};
 
 use crate::scheduler;
 use crate::scheduler::pause::{PauseCell, PauseToken, with_pause, yield_now_from_paused};
+use crate::utils::linked_list::{Links, LinkedListAdapter, HeapLinkedListAdapter};
 
 /// Thread entrypoint function.
 pub type ThreadFn = unsafe extern "C" fn(*mut ());
 
-pub use crate::scheduler::Priority;
 use crate::utils::assert::harden_assert;
 
 const THREAD_STACK_ALIGN: usize = 8;
@@ -79,24 +79,31 @@ impl Flags {
 /// Thread control block structure.
 #[derive(Debug)]
 pub(super) struct Tcb {
+    links: Links,
     /// Pointer to the top of the stack.
-    pub stack_top_ptr: *mut u8,
+    pub(super) stack_top_ptr: *mut u8,
     /// Pointer to the base of the allocated region.
-    pub base_ptr: *mut u8,
+    pub(super) base_ptr: *mut u8,
     /// Size of the stack.
-    pub stack_size: usize,
-    /// Next pointer, used for scheduling queues.
-    pub next: PauseCell<Cell<ThreadPtr>>,
-    /// Previous pointer, used for scheduling queues.
-    pub prev: PauseCell<Cell<ThreadPtr>>,
-    /// Atomic next pointer, used for atomic linked list, such as defer queues.
-    pub atomic_next: AtomicThreadPtr,
+    pub(super) stack_size: usize,
     /// Pointer to a thread waiting for a join.
-    pub join_wait_thread: PauseCell<Cell<Option<ThreadPtr>>>,
+    pub(super) join_wait_thread: PauseCell<Cell<Option<ThreadPtr>>>,
     /// Thread flags.
-    pub flags: Flags,
+    pub(super) flags: Flags,
     /// Thread priority.
-    pub priority: Priority,
+    pub(super) priority: i8,
+}
+
+unsafe impl Send for Tcb {}
+
+pub(super) struct ThreadList;
+
+unsafe impl LinkedListAdapter for ThreadList {
+    type Node = Tcb;
+
+    fn offset_to_links() -> usize {
+        mem::offset_of!(Tcb, links)
+    }
 }
 
 /// Wrapper around a thread pointer.
@@ -124,6 +131,18 @@ impl ThreadPtr {
             Some(tcb) => Some(ThreadPtr(tcb)),
             None => None,
         }
+    }
+}
+
+impl HeapLinkedListAdapter for ThreadList {
+    type Handle = ThreadPtr;
+
+    unsafe fn handle_from_ptr(ptr: NonNull<Tcb>) -> ThreadPtr {
+        ThreadPtr(ptr)
+    }
+
+    fn handle_to_ptr(handle: ThreadPtr) -> NonNull<Tcb> {
+        handle.0
     }
 }
 
@@ -193,87 +212,6 @@ impl fmt::Debug for AtomicThreadPtr {
 }
 
 impl ThreadPtr {
-    #[inline(always)]
-    pub(super) unsafe fn link2(token: PauseToken, thread1: ThreadPtr, thread2: ThreadPtr) {
-        unsafe {
-            thread1.tcb().next.set(token, thread2);
-            thread2.tcb().prev.set(token, thread1);
-        }
-    }
-
-    #[inline(always)]
-    pub(super) unsafe fn link3(
-        token: PauseToken,
-        thread1: ThreadPtr,
-        thread2: ThreadPtr,
-        thread3: ThreadPtr,
-    ) {
-        unsafe {
-            Self::link2(token, thread1, thread2);
-            Self::link2(token, thread2, thread3);
-        }
-    }
-
-    pub(super) unsafe fn link_before(self, token: PauseToken, thread: ThreadPtr) {
-        unsafe {
-            let prev = thread.tcb().prev.get(token);
-            Self::link3(token, prev, self, thread);
-        }
-    }
-
-    pub(super) unsafe fn unlink(self, token: PauseToken) -> Option<ThreadPtr> {
-        unsafe {
-            let prev = self.tcb().prev.get(token);
-            let next = self.tcb().next.get(token);
-
-            if prev == self && next == self {
-                // The thread is already unlinked
-                None
-            } else {
-                Self::link2(token, self, self);
-                Self::link2(token, prev, next);
-                Some(next)
-            }
-        }
-    }
-}
-
-impl ThreadPtr {
-    #[allow(unused)] // TODO: Remove this unused
-    pub(super) unsafe fn atomic_link(self, head: &AtomicThreadPtr) {
-        let mut ptr = head.load(Ordering::Acquire);
-        loop {
-            unsafe {
-                self.tcb().atomic_next.store(ptr, Ordering::Relaxed);
-            }
-
-            match head.compare_exchange(ptr, Some(self), Ordering::Release, Ordering::Acquire) {
-                Ok(_) => break,
-                Err(new_ptr) => ptr = new_ptr,
-            }
-        }
-    }
-
-    #[allow(unused)] // TODO: Remove this unused
-    pub(super) unsafe fn atomic_unlink(head: &AtomicThreadPtr) -> Option<ThreadPtr> {
-        head.swap(None, Ordering::AcqRel)
-    }
-
-    #[allow(unused)] // TODO: Remove this unused
-    pub(super) unsafe fn atomic_link_iter(
-        start: Option<ThreadPtr>,
-    ) -> impl Iterator<Item = ThreadPtr> {
-        let mut iter = start;
-        core::iter::from_fn(move || unsafe {
-            let cur = iter?;
-
-            iter = cur.tcb().atomic_next.load(Ordering::Relaxed);
-            Some(cur)
-        })
-    }
-}
-
-impl ThreadPtr {
     fn layout_for(stack_size: usize) -> Result<(Layout, usize, usize), LayoutError> {
         let layout = Layout::from_size_align(stack_size, THREAD_STACK_ALIGN)?.pad_to_align();
 
@@ -284,7 +222,7 @@ impl ThreadPtr {
         Ok((layout, stack_top_offset, tcb_offset))
     }
 
-    pub(super) fn create(stack_size: usize, priority: Priority) -> Self {
+    pub(super) fn create(stack_size: usize, priority: i8) -> Self {
         // Compute the layout of the thread
         let (layout, stack_top_offset, tcb_offset) =
             Self::layout_for(stack_size).expect("Failed to calculate thread size");
@@ -308,12 +246,10 @@ impl ThreadPtr {
 
         // Initialize thread context
         let tcb = Tcb {
+            links: Links::unlinked(),
             stack_top_ptr: stack_top_ptr.as_ptr(),
             base_ptr: base_ptr.as_ptr(),
             stack_size,
-            next: PauseCell::from(thread_ptr),
-            prev: PauseCell::from(thread_ptr),
-            atomic_next: AtomicThreadPtr::new(None),
             join_wait_thread: PauseCell::default(),
             flags: Flags::empty(),
             priority,
@@ -392,7 +328,6 @@ impl ThreadPtr {
 
             // Set the thread as dead
             self.tcb().flags.set_dead(token);
-            scheduler::remove_ready_paused(token, self);
 
             // Yield to never be scheduled again
             yield_now_from_paused(token);
@@ -401,16 +336,7 @@ impl ThreadPtr {
         }
     }
 
-    pub(super) unsafe fn init_stack_payload<T>(self, value: T) -> *mut () {
-        unsafe {
-            let ptr = self.tcb().base_ptr;
-
-            ptr.cast::<T>().write(value);
-            ptr.cast::<()>()
-        }
-    }
-
-    pub unsafe fn priority(self) -> Priority {
+    pub unsafe fn priority(self) -> i8 {
         unsafe { self.tcb().priority }
     }
 
@@ -428,7 +354,6 @@ impl ThreadPtr {
             );
 
             self.tcb().flags.set_suspend(token);
-            scheduler::remove_ready_paused(token, self);
         }
     }
 
@@ -470,7 +395,7 @@ impl ThreadPtr {
         }
     }
 
-    pub unsafe fn is_idle_paused(self, token: PauseToken) -> bool {
+    pub fn is_idle_paused(self, token: PauseToken) -> bool {
         unsafe { self.tcb().flags.idle(token) }
     }
 }
@@ -486,45 +411,17 @@ pub fn current() -> ThreadPtr {
 
 pub unsafe fn spawn(
     stack_size: usize,
-    priority: Priority,
+    priority: i8,
     entry: unsafe extern "C" fn(*mut ()),
     user: *mut (),
 ) -> ThreadPtr {
+    assert!(scheduler::is_valid_prio(priority), "Invalid priority");
+
     let thread = ThreadPtr::create(stack_size, priority);
 
     unsafe {
         // Initialize the thread initial context and priority
         thread.init(entry, user);
-        // Register the thread to the scheduler
-        scheduler::add_ready(thread);
-    }
-
-    thread
-}
-
-pub fn spawn2<F>(stack_size: usize, priority: Priority, entry: F) -> ThreadPtr
-where
-    F: FnOnce() + Send + Sync,
-{
-    let stack_size = stack_size.max(mem::size_of::<F>() + 512);
-
-    unsafe extern "C" fn launcher<F>(arg: *mut ())
-    where
-        F: FnOnce() + Send + Sync,
-    {
-        // Extract function
-        let entry = unsafe { arg.cast::<F>().read() };
-        // Invoke it
-        (entry)();
-    }
-
-    let thread = ThreadPtr::create(stack_size, priority);
-
-    unsafe {
-        // Write the stack payload
-        let user = thread.init_stack_payload(entry);
-        // Initialize the thread initial context and priority
-        thread.init(launcher::<F>, user);
         // Register the thread to the scheduler
         scheduler::add_ready(thread);
     }

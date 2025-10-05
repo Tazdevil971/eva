@@ -1,348 +1,397 @@
 use core::cell::Cell;
-use core::marker::PhantomPinned;
-use core::pin::{Pin, pin};
-use core::ptr::{NonNull, addr_eq};
+use core::marker::{PhantomData, PhantomPinned};
+use core::pin::Pin;
+use core::ptr::NonNull;
 
-use crate::scheduler::pause::{PauseCell, PauseToken};
+use crate::utils::assert::harden_assert;
 
-/// Internal wrapper around a pointer that comes from a pinned reference.
-#[repr(transparent)]
-#[derive(Debug)]
-struct PinnedPtr<T>(NonNull<T>);
-
-impl<T> PinnedPtr<T> {
-    /// Retrieve a pinned reference from this pointer
-    /// # Safety
-    /// The underlying pointer must be valid.
-    unsafe fn get_ref<'a>(self) -> Pin<&'a T> {
-        unsafe { Pin::new_unchecked(self.0.as_ref()) }
-    }
-}
-
-impl<T> From<Pin<&T>> for PinnedPtr<T> {
-    fn from(value: Pin<&T>) -> Self {
-        Self(NonNull::from(&*value))
-    }
-}
-
-impl<T> Clone for PinnedPtr<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T> Copy for PinnedPtr<T> {}
-
-unsafe impl<T: Sync> Send for PinnedPtr<T> {}
-unsafe impl<T: Sync> Sync for PinnedPtr<T> {}
-
-type NodePtr<T> = PinnedPtr<Node<T>>;
-
-/// A single node inside the linked list.
-#[derive(Debug)]
-pub struct Node<T> {
-    next: PauseCell<Cell<Option<NodePtr<T>>>>,
-    prev: PauseCell<Cell<Option<NodePtr<T>>>>,
-    value: T,
+#[derive(Debug, Clone)]
+pub struct Links {
+    next: Cell<Option<NonNull<Links>>>,
+    prev: Cell<Option<NonNull<Links>>>,
     _pin: PhantomPinned,
 }
 
-impl<T> Node<T> {
-    /// Create a new scoped/pinned node.
-    /// Remember to always unlink a node before returning!
-    pub fn new<F, R>(value: T, f: F) -> R
-    where
-        F: FnOnce(Pin<&Node<T>>) -> R,
-    {
-        let node = Node {
-            next: PauseCell::from(None),
-            prev: PauseCell::from(None),
-            value,
+unsafe impl Send for Links {}
+
+impl Links {
+    pub const fn unlinked() -> Self {
+        Self {
+            next: Cell::new(None),
+            prev: Cell::new(None),
             _pin: PhantomPinned,
-        };
-
-        let node = pin!(node);
-        let node = node.into_ref();
-
-        f(node)
+        }
     }
 
-    /// Retrieve the value inside of this node.
-    pub const fn value(&self) -> &T {
-        &self.value
+    unsafe fn next(ptr: NonNull<Self>) -> Option<NonNull<Self>> {
+        unsafe {
+            ptr.as_ref().next.get()
+        }
     }
 
-    /// Check if two nodes are the same (not if they contain the same value!).
-    pub fn is_same(&self, other: &Node<T>) -> bool {
-        addr_eq(self, other)
-    }
-
-    /// Does this node have a next node?
-    pub fn has_next(&self, token: PauseToken) -> bool {
-        self.next.get(token).is_some()
-    }
-
-    /// Does this node have a previous node?
-    pub fn has_prev(&self, token: PauseToken) -> bool {
-        self.prev.get(token).is_some()
-    }
-
-    /// Retrieve the next node in the list.
-    /// # Safety
-    /// Caller must ensure that the returned node has the correct lifetime.
-    pub unsafe fn next<'a>(&self, token: PauseToken<'a>) -> Option<Pin<&'a Node<T>>> {
-        self.next.get(token).map(|ptr| unsafe { ptr.get_ref() })
-    }
-
-    /// Retrieve the previous node in the list.
-    /// # Safety
-    /// Caller must ensure that the returned node has the correct lifetime.
-    pub unsafe fn prev<'a>(&self, token: PauseToken<'a>) -> Option<Pin<&'a Node<T>>> {
-        self.prev.get(token).map(|ptr| unsafe { ptr.get_ref() })
+    unsafe fn prev(ptr: NonNull<Self>) -> Option<NonNull<Self>> {
+        unsafe {
+            ptr.as_ref().prev.get()
+        }
     }
 }
 
 #[derive(Debug)]
-pub struct LinkedList<T> {
-    head: PauseCell<Cell<Option<NodePtr<T>>>>,
-    tail: PauseCell<Cell<Option<NodePtr<T>>>>,
+struct RawLinkedList {
+    head: Cell<Option<NonNull<Links>>>,
+    tail: Cell<Option<NonNull<Links>>>,
 }
 
-impl<T> LinkedList<T> {
-    /// Create a new empty linked list.
-    pub const fn new() -> Self {
+unsafe impl Send for RawLinkedList {}
+
+impl RawLinkedList {
+    const fn empty() -> Self {
         Self {
-            head: PauseCell::new(Cell::new(None)),
-            tail: PauseCell::new(Cell::new(None)),
+            head: Cell::new(None),
+            tail: Cell::new(None),
         }
     }
 
-    /// Check if this linked list is empty.
-    pub fn is_empty(&self, token: PauseToken) -> bool {
-        self.head.get(token).is_none() && self.tail.get(token).is_none()
+    fn is_empty(&self) -> bool {
+        harden_assert!(self.head.get().is_none() == self.tail.get().is_none());
+        self.head.get().is_none()
     }
 
-    /// Check if a given node is linked to this list.
-    /// # Safety
-    /// The provided node must be either unlinked or linked to **this** list.
-    pub unsafe fn contains(&self, token: PauseToken, node: Pin<&Node<T>>) -> bool {
+    unsafe fn link2(&self, prev: Option<NonNull<Links>>, next: Option<NonNull<Links>>) {
+        if let Some(prev) = prev {
+            unsafe {
+                // SAFETY:
+                prev.as_ref().next.set(next);
+            }
+        } else {
+            self.head.set(next);
+        }
+
+        if let Some(next) = next {
+            unsafe {
+                // SAFETY:
+                next.as_ref().prev.set(prev);
+            }
+        } else {
+            self.tail.set(prev);
+        }
+    }
+
+    unsafe fn link3(
+        &self,
+        prev: Option<NonNull<Links>>,
+        middle: NonNull<Links>,
+        next: Option<NonNull<Links>>,
+    ) {
         unsafe {
-            // SAFETY: The scheduler is paused so we have access to all the nodes in this scope
-            self.front(token)
-                .map(|node2| node2.is_same(&*node))
-                .unwrap_or(false)
-                || node.has_prev(token)
+            // SAFETY:
+            self.link2(prev, Some(middle));
+            self.link2(Some(middle), next);
         }
     }
 
-    /// Retrieve the front (or first) node of this queue.
-    /// # Safety
-    /// Caller must ensure that the returned node has the correct lifetime.
-    pub unsafe fn front<'a>(&'a self, token: PauseToken<'a>) -> Option<Pin<&'a Node<T>>> {
-        self.head.get(token).map(|ptr| unsafe { ptr.get_ref() })
-    }
-
-    /// Retrieve the back (or last) node of this queue.
-    /// # Safety
-    /// Caller must ensure that the returned node has the correct lifetime.
-    pub unsafe fn back<'a>(&'a self, token: PauseToken<'a>) -> Option<Pin<&'a Node<T>>> {
-        self.tail.get(token).map(|ptr| unsafe { ptr.get_ref() })
-    }
-
-    /// Retrieve an iterator over all nodes.
-    /// # Safety
-    /// Caller must ensure that the returned node and iterator has the correct lifetime.
-    pub unsafe fn iter<'a>(
-        &'a self,
-        token: PauseToken<'a>,
-    ) -> impl Iterator<Item = Pin<&'a Node<T>>> {
-        let mut iter = unsafe {
-            // SAFETY: Lifetime contract must be upheld by the caller
-            self.front(token)
-        };
+    fn iter(&self) -> impl Iterator<Item = NonNull<Links>> {
+        let mut iter = self.head.get();
 
         core::iter::from_fn(move || {
-            let value = iter?;
+            let node = iter?;
             iter = unsafe {
-                // SAFETY: Lifetime contract must be upheld by the caller
-                value.next(token)
+                // SAFETY:
+                Links::next(node)
             };
 
-            Some(value)
+            Some(node)
         })
     }
 
-    /// Internal function used to link two nodes together.
+    unsafe fn insert_after(&self, prev: NonNull<Links>, node: NonNull<Links>) {
+        let next = unsafe {
+            // SAFETY:
+            Links::next(prev)
+        };
+
+        unsafe {
+            // SAFETY:
+            self.link3(Some(prev), node, next);
+        }
+    }
+
+    unsafe fn insert_before(&self, next: NonNull<Links>, node: NonNull<Links>) {
+        let prev = unsafe {
+            // SAFETY:
+            Links::prev(next)
+        };
+
+        unsafe {
+            // SAFETY:
+            self.link3(prev, node, Some(next));
+        }
+    }
+
+    unsafe fn push_front(&self, node: NonNull<Links>) {
+        let head = self.head.get();
+        unsafe {
+            // SAFETY:
+            self.link3(None, node, head);
+        }
+    }
+
+    unsafe fn push_back(&self, node: NonNull<Links>) {
+        let tail = self.tail.get();
+        unsafe {
+            // SAFETY:
+            self.link3(tail, node, None);
+        }
+    }
+
+    unsafe fn remove(&self, node: NonNull<Links>) {
+        let (prev, next) = unsafe {
+            // SAFETY:
+            (Links::prev(node), Links::next(node))
+        };
+
+        unsafe {
+            // SAFETY:
+            self.link2(prev, next);
+        }
+    }
+
+    fn pop_front(&self) -> Option<NonNull<Links>> {
+        if let Some(head) = self.head.get() {
+            let next = unsafe {
+                // SAFETY:
+                Links::next(head)
+            };
+
+            unsafe {
+                // SAFETY:
+                self.link2(None, next);
+            }
+
+            Some(head)
+        } else {
+            None
+        }
+    }
+
+    fn pop_back(&self) -> Option<NonNull<Links>> {
+        if let Some(tail) = self.tail.get() {
+            let prev = unsafe { Links::prev(tail) };
+
+            unsafe {
+                // SAFETY:
+                self.link2(prev, None);
+            }
+
+            Some(tail)
+        } else {
+            None
+        }
+    }
+}
+
+pub unsafe trait LinkedListAdapter {
+    type Node;
+
+    fn offset_to_links() -> usize;
+}
+
+struct TypedLinkedList<T: LinkedListAdapter> {
+    inner: RawLinkedList,
+    // TODO: Check variance over T
+    _phantom: PhantomData<*const T::Node>,
+}
+
+unsafe impl<T: LinkedListAdapter> Send for TypedLinkedList<T> where T::Node: Send {}
+
+impl<T: LinkedListAdapter> TypedLinkedList<T> {
     #[inline(always)]
-    fn link2(&self, token: PauseToken, prev: Option<Pin<&Node<T>>>, next: Option<Pin<&Node<T>>>) {
-        {
-            let next = next.map(PinnedPtr::from);
-            if let Some(prev) = prev {
-                prev.next.set(token, next);
-            } else {
-                self.head.set(token, next);
-            }
-        }
-
-        {
-            let prev = prev.map(PinnedPtr::from);
-            if let Some(next) = next {
-                next.prev.set(token, prev);
-            } else {
-                self.tail.set(token, prev);
-            }
+    const fn empty() -> Self {
+        Self {
+            inner: RawLinkedList::empty(),
+            _phantom: PhantomData,
         }
     }
 
-    /// Remove a node from the linked list.
-    /// # Safety
-    /// The node must be linked to this exact linked list.
-    pub unsafe fn remove(&self, token: PauseToken, node: Pin<&Node<T>>) {
-        let next = node.next.take(token);
-        let prev = node.prev.take(token);
-
-        let next = next.map(|ptr| unsafe { ptr.get_ref() });
-        let prev = prev.map(|ptr| unsafe { ptr.get_ref() });
-
-        self.link2(token, prev, next);
+    #[inline(always)]
+    fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 
-    /// Remove a node from the linked list only if it linked
-    /// # Safety
-    /// The provided node must be either unlinked or linked to **this** list.
-    pub unsafe fn try_remove(&self, token: PauseToken, node: Pin<&Node<T>>) -> bool {
-        if unsafe {
-            // SAFETY: The caller must ensure that this is callable
-            self.contains(token, node)
-        } {
-            unsafe {
-                // SAFETY: We just checked that the node is inside this list
-                self.remove(token, node);
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Insert a node after another one
-    /// # Safety
-    /// - `prev` must be linked to this exact linked list.
-    /// - `node` must be removed before being dropped.
-    pub unsafe fn insert_after(
-        &self,
-        token: PauseToken,
-        prev: Option<Pin<&Node<T>>>,
-        node: Pin<&Node<T>>,
-    ) {
-        let old_next = if let Some(prev) = prev {
-            prev.next.get(token)
-        } else {
-            self.head.get(token)
-        };
-
-        let old_next = old_next.map(|ptr| unsafe { ptr.get_ref() });
-
-        self.link2(token, prev, Some(node));
-        self.link2(token, Some(node), old_next);
-    }
-
-    /// Insert a node before another one
-    /// # Safety
-    /// - `prev` must be linked to this exact linked list.
-    /// - `node` must be removed before being dropped.
-    pub unsafe fn insert_before(
-        &self,
-        token: PauseToken,
-        next: Option<Pin<&Node<T>>>,
-        node: Pin<&Node<T>>,
-    ) {
-        let old_prev = if let Some(next) = next {
-            next.prev.get(token)
-        } else {
-            self.tail.get(token)
-        };
-
-        let old_prev = old_prev.map(|ptr| unsafe { ptr.get_ref() });
-
-        self.link2(token, old_prev, Some(node));
-        self.link2(token, Some(node), next);
-    }
-
-    /// Insert a node, keeping the list sorted by the given key.
-    /// Nodes with matching keys are ordered in from right to left, in order of insertion.
-    /// # Safety
-    /// `node` must be removed before being dropped.
-    pub unsafe fn insert_sorted_by_key<K, F>(
-        &self,
-        token: PauseToken,
-        node: Pin<&Node<T>>,
-        mut f: F,
-    ) where
-        F: FnMut(Pin<&Node<T>>) -> K,
-        K: Ord,
-    {
+    #[inline(always)]
+    fn links_to_node(links: NonNull<Links>) -> NonNull<T::Node> {
         unsafe {
-            // SAFETY: We guarantee that the iterator or node does not escape this scope
-            let point = self.iter(token).find(|&node2| f(node2) > f(node));
-            // SAFETY: We just obtained point from an iterator, thus it's valid
-            self.insert_before(token, point, node);
+            // SAFETY:
+            links.cast::<T::Node>().byte_sub(T::offset_to_links())
         }
     }
 
-    /// Push a node to the front of the queue.
-    /// # Safety
-    /// `node` must be removed before being dropped.
-    pub unsafe fn push_front(&self, token: PauseToken, node: Pin<&Node<T>>) {
+    #[inline(always)]
+    fn links_from_node(node: NonNull<T::Node>) -> NonNull<Links> {
         unsafe {
-            self.insert_after(token, None, node);
+            // SAFETY:
+            node.byte_add(T::offset_to_links()).cast::<Links>()
         }
     }
 
-    /// Push a node to the back of the queue.
-    /// # Safety
-    /// `node` must be removed before being dropped.
-    pub unsafe fn push_back(&self, token: PauseToken, node: Pin<&Node<T>>) {
+    #[inline(always)]
+    fn iter(&self) -> impl Iterator<Item = NonNull<T::Node>> {
+        self.inner.iter().map(Self::links_to_node)
+    }
+
+    #[inline(always)]
+    unsafe fn insert_after(&self, prev: NonNull<T::Node>, node: NonNull<T::Node>) {
         unsafe {
-            self.insert_before(token, None, node);
+            self.inner
+                .insert_after(Self::links_from_node(prev), Self::links_from_node(node));
         }
     }
 
-    /// Remove and return the first element of the list.
-    /// # Safety
-    /// Caller must ensure that the returned node and iterator has the correct lifetime.
-    pub unsafe fn pop_front<'a>(&'a self, token: PauseToken<'a>) -> Option<Pin<&'a Node<T>>> {
-        let front = unsafe {
-            // SAFETY: Caller must ensure that this lifetime is valid
-            self.front(token)
-        };
-
-        if let Some(front) = front {
-            unsafe {
-                // SAFETY: We just received this node from the list, it is valid and linked
-                self.remove(token, front);
-            }
+    #[inline(always)]
+    unsafe fn insert_before(&self, next: NonNull<T::Node>, node: NonNull<T::Node>) {
+        unsafe {
+            self.inner
+                .insert_before(Self::links_from_node(next), Self::links_from_node(node));
         }
-
-        front
     }
 
-    /// Remove and return the last element of the list.
-    /// # Safety
-    /// Caller must ensure that the returned node and iterator has the correct lifetime.
-    pub unsafe fn pop_back<'a>(&'a self, token: PauseToken<'a>) -> Option<Pin<&'a Node<T>>> {
-        let back = unsafe {
-            // SAFETY: Caller must ensure that this lifetime is valid
-            self.back(token)
-        };
-
-        if let Some(back) = back {
-            unsafe {
-                // SAFETY: We just received this node from the list, it is valid and linked
-                self.remove(token, back);
-            }
+    #[inline(always)]
+    unsafe fn push_front(&self, node: NonNull<T::Node>) {
+        unsafe {
+            self.inner.push_front(Self::links_from_node(node));
         }
+    }
 
-        back
+    #[inline(always)]
+    unsafe fn push_back(&self, node: NonNull<T::Node>) {
+        unsafe {
+            self.inner.push_back(Self::links_from_node(node));
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn remove(&self, node: NonNull<T::Node>) {
+        unsafe {
+            self.inner.remove(Self::links_from_node(node));
+        }
+    }
+
+    #[inline(always)]
+    fn pop_front(&self) -> Option<NonNull<T::Node>> {
+        self.inner.pop_front().map(Self::links_to_node)
+    }
+
+    #[inline(always)]
+    fn pop_back(&self) -> Option<NonNull<T::Node>> {
+        self.inner.pop_back().map(Self::links_to_node)
+    }
+}
+
+pub struct StackLinkedList<T: LinkedListAdapter>(TypedLinkedList<T>);
+
+impl<T: LinkedListAdapter> StackLinkedList<T> {
+    pub const fn empty() -> Self {
+        Self(TypedLinkedList::empty())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub unsafe fn iter<'a>(&'a self) -> impl Iterator<Item = Pin<&'a T::Node>> {
+        self.0
+            .iter()
+            .map(|ptr| unsafe { Pin::new_unchecked(ptr.as_ref()) })
+    }
+
+    pub unsafe fn insert_after(&self, prev: Pin<&T::Node>, node: Pin<&T::Node>) {
+        unsafe {
+            self.0
+                .insert_after(NonNull::from(prev.get_ref()), NonNull::from(node.get_ref()));
+        }
+    }
+
+    pub unsafe fn insert_before(&self, next: Pin<&T::Node>, node: Pin<&T::Node>) {
+        unsafe {
+            self.0
+                .insert_before(NonNull::from(next.get_ref()), NonNull::from(node.get_ref()));
+        }
+    }
+
+    pub unsafe fn push_front(&self, node: Pin<&T::Node>) {
+        unsafe {
+            self.0.push_front(NonNull::from(node.get_ref()));
+        }
+    }
+
+    pub unsafe fn push_back(&self, node: Pin<&T::Node>) {
+        unsafe {
+            self.0.push_back(NonNull::from(node.get_ref()));
+        }
+    }
+
+    pub unsafe fn remove(&self, node: Pin<&T::Node>) {
+        unsafe { self.0.remove(NonNull::from(node.get_ref())) }
+    }
+
+    pub unsafe fn pop_front<'a>(&'a self) -> Option<Pin<&'a T::Node>> {
+        self.0
+            .pop_front()
+            .map(|ptr| unsafe { Pin::new_unchecked(ptr.as_ref()) })
+    }
+
+    pub unsafe fn pop_back<'a>(&'a self) -> Option<Pin<&'a T::Node>> {
+        self.0
+            .pop_back()
+            .map(|ptr| unsafe { Pin::new_unchecked(ptr.as_ref()) })
+    }
+}
+
+pub trait HeapLinkedListAdapter: LinkedListAdapter {
+    type Handle;
+
+    unsafe fn handle_from_ptr(ptr: NonNull<Self::Node>) -> Self::Handle;
+    fn handle_to_ptr(handle: Self::Handle) -> NonNull<Self::Node>;
+}
+
+pub struct HeapLinkedList<T: HeapLinkedListAdapter>(TypedLinkedList<T>);
+
+impl<T: HeapLinkedListAdapter> HeapLinkedList<T> {
+    pub const fn empty() -> Self {
+        Self(TypedLinkedList::empty())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub unsafe fn push_front(&self, node: T::Handle) {
+        unsafe {
+            self.0.push_front(T::handle_to_ptr(node));
+        }
+    }
+
+    pub unsafe fn push_back(&self, node: T::Handle) {
+        unsafe {
+            self.0.push_back(T::handle_to_ptr(node));
+        }
+    }
+
+    pub fn pop_front(&self) -> Option<T::Handle> {
+        self.0.pop_front().map(|ptr| unsafe {
+            T::handle_from_ptr(ptr)
+        })
+    }
+
+    pub fn pop_back(&self) -> Option<T::Handle> {
+        self.0.pop_back().map(|ptr| unsafe {
+            T::handle_from_ptr(ptr)
+        })
+    }
+
+    pub unsafe fn remove(&self, node: T::Handle) {
+        unsafe {
+            self.0.remove(T::handle_to_ptr(node));
+        }
     }
 }

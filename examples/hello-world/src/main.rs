@@ -5,7 +5,7 @@ extern crate eva_bsp_linux;
 
 use eva_kernel::kprintln;
 use eva_kernel::scheduler::sync::mutex::Mutex;
-use eva_kernel::scheduler::thread::{self, Priority};
+use eva_kernel::scheduler::thread;
 
 static GLOBAL_VAR: Mutex<u32> = Mutex::new(0);
 
@@ -15,7 +15,7 @@ fn main() {
     kprintln!("Hello world!");
 
     let thread =
-        unsafe { thread::spawn(4096 * 4, Priority::MIN, other_thread, core::ptr::null_mut()) };
+        unsafe { thread::spawn(4096 * 4, 0, other_thread, core::ptr::null_mut()) };
 
     kprintln!("1) Before lock");
     {

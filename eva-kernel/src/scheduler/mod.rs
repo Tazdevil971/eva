@@ -8,27 +8,64 @@ pub mod thread;
 /// Synchronization primitives.
 pub mod sync;
 
-/// Priority related data-structures.
-mod priority;
-
 use core::cell::RefCell;
 use core::ptr;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use pause::{PauseCell, PauseToken, with_pause};
-use thread::{AtomicThreadPtr, ThreadPtr};
+use thread::{AtomicThreadPtr, ThreadList, ThreadPtr};
 
 use crate::utils::assert::harden_assert;
+use crate::utils::bitset::Bitset32;
+use crate::utils::linked_list::HeapLinkedList;
 
-pub use priority::Priority;
+fn is_valid_prio(prio: i8) -> bool {
+    prio >= 0 && prio <= 31
+}
 
 /// Internal mutable thread structure.
 struct Rings {
     /// Bitmask representing queues that are not empty.
-    set: priority::Bitset,
-    prio: priority::Array<Option<ThreadPtr>>,
+    set: Bitset32,
+    prio: [HeapLinkedList<ThreadList>; 32],
     /// Idle thread.
     idle: Option<ThreadPtr>,
+}
+
+impl Rings {
+    unsafe fn add_thread(&mut self, thread: ThreadPtr) {
+        let prio = unsafe { thread.priority() };
+
+        unsafe {
+            harden_assert!(is_valid_prio(prio), "invalid priority");
+            self.prio.get_unchecked(prio as usize).push_back(thread);
+        }
+
+        self.set.insert(prio as usize);
+    }
+
+    unsafe fn pop_thread(&mut self) -> ThreadPtr {
+        if let Some(prio) = self.set.highest() {
+            let thread = unsafe {
+                self.prio.get_unchecked(prio)
+                    .pop_front()
+            };
+            
+            let thread = unsafe {
+                harden_assert!(thread.is_some(), "");
+                thread.unwrap_unchecked()
+            };
+
+            
+
+            thread
+        } else {
+            unsafe {
+                harden_assert!(self.idle.is_some(), "no idle thread installed");
+                self.idle.unwrap_unchecked()
+            }
+        }
+    }
 }
 
 const STATE_PAUSED_BIT: u8 = 1 << 0;
@@ -48,8 +85,8 @@ struct Scheduler {
 static SCHEDULER: Scheduler = Scheduler {
     state: AtomicU8::new(0),
     rings: PauseCell::new(RefCell::new(Rings {
-        set: priority::Bitset::new(),
-        prio: priority::Array::new([None; 32]),
+        set: Bitset32::empty(),
+        prio: [const { HeapLinkedList::empty() }; 32],
         idle: None,
     })),
     cur: AtomicThreadPtr::new(None),
@@ -153,89 +190,59 @@ unsafe fn add_ready_paused(token: PauseToken, thread: ThreadPtr) {
         "cannot add to ready queue idle thread"
     );
 
-    let prio = unsafe {
-        // SAFETY: thread is guaranteed to be valid by the caller
-        thread.priority()
-    };
-
     let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
-    let ring = &mut rings.prio[prio];
 
-    if let Some(ring) = *ring {
-        unsafe {
-            // SAFETY: thread is guaranteed to be valid by the caller
-            thread.link_before(token, ring);
-        }
-    } else {
-        *ring = Some(thread);
-        // This ring was previously empty, also update the mask
-        rings.set.insert(prio);
+    let prio = unsafe { thread.priority() };
+    harden_assert!(is_valid_prio(prio), "invalid priority");
+
+    unsafe {
+        rings.prio.get_unchecked(prio as usize).push_back(thread);
     }
-}
 
-/// Remove a thread from the ready queue. Can only be called with scheduler paused.
-/// # Safety
-/// - `thread` must be a valid `ThreadPtr`.
-/// - `thread` must be present in its respective ready queue.
-unsafe fn remove_ready_paused(token: PauseToken, thread: ThreadPtr) {
-    harden_assert!(
-        unsafe { !thread.tcb().flags.idle(token) },
-        "cannot remove from ready queue idle thread"
-    );
-
-    let prio = unsafe {
-        // SAFETY: thread is guaranteed to be valid by the caller
-        thread.priority()
-    };
-
-    let next = unsafe {
-        // SAFETY: thread is guaranteed to be valid by the caller
-        thread.unlink(token)
-    };
-
-    let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
-    let ring = &mut rings.prio[prio];
-
-    if *ring == Some(thread) {
-        // This thread WAS the head, update the head!
-        *ring = next;
-
-        if next.is_none() {
-            // The queue is actually empty now, update the mask
-            rings.set.remove(prio);
-        }
-    }
+    rings.set.insert(prio as usize);
 }
 
 fn run_scheduler_paused(token: PauseToken) {
+    // First put back the currently executing thread
+    let cur = unsafe { SCHEDULER.cur.load(Ordering::Relaxed).unwrap_unchecked() };
+
     let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
+
+    if unsafe { !cur.tcb().flags.idle(token) && cur.tcb().flags.ready(token) } {
+        let prio = unsafe { cur.priority() };
+        harden_assert!(is_valid_prio(prio), "invalid priority");
+
+        unsafe {
+            rings.prio.get_unchecked(prio as usize).push_back(cur);
+        }
+
+        rings.set.insert(prio as usize);
+    }
+
     let ready = if let Some(highest) = rings.set.highest() {
         let ring = &mut rings.prio[highest];
 
         // Retrieve the head
         let ready = unsafe {
             harden_assert!(
-                ring.is_some(),
+                !ring.is_empty(),
                 "prio_mask indicates non empty ring, but ring is empty"
             );
+
             // SAFETY: prio_mask always indicates non-empty rings
-            ring.unwrap_unchecked()
+            ring.pop_front().unwrap_unchecked()
         };
 
-        // Rotate the queue to get the next
-        let ready = unsafe {
-            // SAFETY: The thread is ready, so it must be valid
-            ready.tcb().next.get(token)
-        };
+        if ring.is_empty() {
+            rings.set.remove(highest);
+        }
 
-        // Set the new head
-        *ring = Some(ready);
         ready
     } else {
         // The priority set is empty, no thread is ready, just return the idle one
         unsafe {
             harden_assert!(rings.idle.is_some(), "no idle thread has been installed");
-            // SAFETY: enter() will install an idle thread before unpausing the scheduler
+            // SAFETY: enter() will install an idle thread before starting the scheduler
             rings.idle.unwrap_unchecked()
         }
     };
@@ -286,7 +293,7 @@ pub unsafe fn init() {
         idle_task();
     }
 
-    let idle = ThreadPtr::create(IDLE_STACK, Priority::MIN);
+    let idle = ThreadPtr::create(IDLE_STACK, -1);
     unsafe {
         idle.init(idle_entry, ptr::null_mut());
     }
