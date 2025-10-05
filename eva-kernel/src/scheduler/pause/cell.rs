@@ -97,8 +97,7 @@ impl<T: Copy> PauseCell<Cell<T>> {
     }
 
     pub fn update<'a>(&self, token: PauseToken<'a>, f: impl FnOnce(T) -> T) {
-        let old = self.get(token);
-        self.set(token, f(old));
+        self.borrow(token).update(f);
     }
 }
 

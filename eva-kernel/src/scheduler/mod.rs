@@ -8,27 +8,24 @@ pub mod thread;
 /// Synchronization primitives.
 pub mod sync;
 
-/// Priority related data-structures.
-mod priority;
+/// Scheduler implementation.
+mod sched;
 
-use core::cell::RefCell;
 use core::ptr;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use pause::{PauseCell, PauseToken, with_pause};
 use thread::{AtomicThreadPtr, ThreadPtr};
+use sched::Sched;
 
 use crate::utils::assert::harden_assert;
 
-pub use priority::Priority;
+pub const IDLE_PRIORITY: i8 = -1;
+pub const MIN_PRIORITY: i8 = 0;
+pub const MAX_PRIORITY: i8 = 31;
 
-/// Internal mutable thread structure.
-struct Rings {
-    /// Bitmask representing queues that are not empty.
-    set: priority::Bitset,
-    prio: priority::Array<Option<ThreadPtr>>,
-    /// Idle thread.
-    idle: Option<ThreadPtr>,
+pub fn is_valid_prio(prio: i8) -> bool {
+    prio >= MIN_PRIORITY && prio <= MAX_PRIORITY
 }
 
 const STATE_PAUSED_BIT: u8 = 1 << 0;
@@ -40,18 +37,14 @@ struct Scheduler {
     /// Internal scheduler state
     state: AtomicU8,
     /// Thread holding structure.
-    rings: PauseCell<RefCell<Rings>>,
+    sched: PauseCell<Sched>,
     /// Current thread.
     cur: AtomicThreadPtr,
 }
 
 static SCHEDULER: Scheduler = Scheduler {
     state: AtomicU8::new(0),
-    rings: PauseCell::new(RefCell::new(Rings {
-        set: priority::Bitset::new(),
-        prio: priority::Array::new([None; 32]),
-        idle: None,
-    })),
+    sched: PauseCell::new(Sched::new()),
     cur: AtomicThreadPtr::new(None),
 };
 
@@ -149,105 +142,35 @@ unsafe fn add_ready(thread: ThreadPtr) {
 /// - `thread` must not be the idle thread.
 unsafe fn add_ready_paused(token: PauseToken, thread: ThreadPtr) {
     harden_assert!(
-        unsafe { !thread.tcb().flags.idle(token) },
+        unsafe { thread.priority() != IDLE_PRIORITY },
         "cannot add to ready queue idle thread"
     );
 
-    let prio = unsafe {
-        // SAFETY: thread is guaranteed to be valid by the caller
-        thread.priority()
-    };
-
-    let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
-    let ring = &mut rings.prio[prio];
-
-    if let Some(ring) = *ring {
-        unsafe {
-            // SAFETY: thread is guaranteed to be valid by the caller
-            thread.link_before(token, ring);
-        }
-    } else {
-        *ring = Some(thread);
-        // This ring was previously empty, also update the mask
-        rings.set.insert(prio);
-    }
-}
-
-/// Remove a thread from the ready queue. Can only be called with scheduler paused.
-/// # Safety
-/// - `thread` must be a valid `ThreadPtr`.
-/// - `thread` must be present in its respective ready queue.
-unsafe fn remove_ready_paused(token: PauseToken, thread: ThreadPtr) {
-    harden_assert!(
-        unsafe { !thread.tcb().flags.idle(token) },
-        "cannot remove from ready queue idle thread"
-    );
-
-    let prio = unsafe {
-        // SAFETY: thread is guaranteed to be valid by the caller
-        thread.priority()
-    };
-
-    let next = unsafe {
-        // SAFETY: thread is guaranteed to be valid by the caller
-        thread.unlink(token)
-    };
-
-    let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
-    let ring = &mut rings.prio[prio];
-
-    if *ring == Some(thread) {
-        // This thread WAS the head, update the head!
-        *ring = next;
-
-        if next.is_none() {
-            // The queue is actually empty now, update the mask
-            rings.set.remove(prio);
-        }
+    unsafe {
+        SCHEDULER.sched.borrow(token).push_thread(thread);
     }
 }
 
 fn run_scheduler_paused(token: PauseToken) {
-    let mut rings = SCHEDULER.rings.borrow_ref_mut(token);
-    let ready = if let Some(highest) = rings.set.highest() {
-        let ring = &mut rings.prio[highest];
-
-        // Retrieve the head
-        let ready = unsafe {
-            harden_assert!(
-                ring.is_some(),
-                "prio_mask indicates non empty ring, but ring is empty"
-            );
-            // SAFETY: prio_mask always indicates non-empty rings
-            ring.unwrap_unchecked()
-        };
-
-        // Rotate the queue to get the next
-        let ready = unsafe {
-            // SAFETY: The thread is ready, so it must be valid
-            ready.tcb().next.get(token)
-        };
-
-        // Set the new head
-        *ring = Some(ready);
-        ready
-    } else {
-        // The priority set is empty, no thread is ready, just return the idle one
+    let cur = unsafe { SCHEDULER.cur.load(Ordering::Relaxed).unwrap_unchecked() };
+    if unsafe { cur.tcb().flags.ready(token) } {
         unsafe {
-            harden_assert!(rings.idle.is_some(), "no idle thread has been installed");
-            // SAFETY: enter() will install an idle thread before unpausing the scheduler
-            rings.idle.unwrap_unchecked()
+            SCHEDULER.sched.borrow(token).push_thread(cur);
         }
+    }
+
+    let next = unsafe {
+        SCHEDULER.sched.borrow(token).pop_thread()
     };
 
     harden_assert!(
-        unsafe { ready.tcb().flags.ready(token) },
+        unsafe { next.tcb().flags.ready(token) },
         "selected thread is not actually ready!"
     );
 
     unsafe {
         // SAFETY: ready will always be a valid ThreadPtr, freed thread will always be removed from the respective queue
-        set_current_paused(token, ready);
+        set_current_paused(token, next);
     }
 }
 
@@ -286,7 +209,7 @@ pub unsafe fn init() {
         idle_task();
     }
 
-    let idle = ThreadPtr::create(IDLE_STACK, Priority::MIN);
+    let idle = ThreadPtr::create(IDLE_STACK, IDLE_PRIORITY);
     unsafe {
         idle.init(idle_entry, ptr::null_mut());
     }
@@ -297,13 +220,9 @@ pub unsafe fn init() {
     };
 
     unsafe {
-        // Set idle flag in thread flags
-        // SAFETY: thread is valid.
-        idle.tcb().flags.set_idle(token);
+        // Set the newly created thread as the idle one
+        SCHEDULER.sched.borrow(token).set_idle(idle);
     }
-
-    // Set the newly created thread as the idle one
-    SCHEDULER.rings.borrow_ref_mut(token).idle = Some(idle);
 
     unsafe {
         // Set this thread as the current one, as we are about to run it

@@ -4,7 +4,7 @@ use core::ffi::{c_char, c_int, c_void};
 use core::time::Duration;
 use core::{fmt, mem, ptr};
 
-use eva_kernel::scheduler::thread::{self, Priority};
+use eva_kernel::scheduler::thread;
 use eva_kernel::{allocator, kprintln, scheduler};
 
 fn scheduler_tick_signum() -> i32 {
@@ -81,7 +81,7 @@ fn init_stage1() {
     {
         unsafe {
             // Spawn first thread
-            thread::spawn(4096 * 4, Priority::MIN, init_stage2, 0 as _);
+            thread::spawn(4096 * 4, 0, init_stage2, 0 as _);
 
             // Launch the scheduler
             scheduler::init();

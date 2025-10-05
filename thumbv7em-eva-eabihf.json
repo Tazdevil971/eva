@@ -14,7 +14,7 @@
     "max-atomic-width": 32,
     "panic-strategy": "abort",
     "relocation-model": "static",
-    "target-pointer-width": "32",
+    "target-pointer-width": 32,
     "os": "eva",
     "late-link-args": {
         "gnu": ["-Tlink.x"]
