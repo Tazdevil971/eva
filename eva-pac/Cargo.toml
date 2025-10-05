@@ -3,3 +3,4 @@ name = "eva-pac"
 version = "0.1.0"
 edition = "2024"
 authors = ["Davide Mor <tazdevil971@gmail.com>"]
+license = "LGPL-3.0-or-later WITH LGPL-3.0-linking-exception"

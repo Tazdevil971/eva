@@ -2,19 +2,17 @@
 resolver = "3"
 members = [
     "eva-pac",
-    "eva-alloc",
-    "eva-scheduler",
-    "eva-bsp-stm32f767",
-    "eva-bsp-linux",
+    "eva-kernel",
+    "eva-bsp/stm32f767",
+    "eva-bsp/linux",
     "examples/hello-world"
 ]
 
 [workspace.dependencies]
 eva-pac = { path = "eva-pac" }
-eva-alloc = { path = "eva-alloc" }
-eva-scheduler = { path = "eva-scheduler" }
-eva-bsp-stm32f767 = { path = "eva-bsp-stm32f767" }
-eva-bsp-linux = { path = "eva-bsp-linux" }
+eva-kernel = { path = "eva-kernel" }
+eva-bsp-stm32f767 = { path = "eva-bsp/stm32f767" }
+eva-bsp-linux = { path = "eva-bsp/linux" }
 
 rtt-target = "0.6.1"
 critical-section = "1.0.0"

@@ -1,0 +1,12 @@
+[package]
+name = "eva-bsp-stm32f767"
+version = "0.1.0"
+edition = "2024"
+authors = ["Davide Mor <tazdevil971@gmail.com>"]
+license = "LGPL-3.0-or-later WITH LGPL-3.0-linking-exception"
+
+[dependencies]
+eva-pac = { workspace = true }
+eva-kernel = { workspace = true }
+
+rtt-target = { workspace = true }

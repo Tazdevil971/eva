@@ -3,4 +3,10 @@
 </p>
 
 # EVA
-Embedded RTOS written in Rust.
+EVA is an embedded RTOS written in rust.
+
+## Goals
+What makes EVA unique are its goals:
+- Multi language support in the userspace.
+- Rich userspace, with support for standard libraries through partial posix compliance.
+- Easy to integrate, leveraging existing tooling such as cargo and CMake.
