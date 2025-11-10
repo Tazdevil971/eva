@@ -8,6 +8,7 @@
     "llvm-floatabi": "hard",
     "llvm-target": "x86_64-unknown-linux-gnu",
     "max-atomic-width": 64,
+    "disable-redzone": true,
     "panic-strategy": "abort",
     "relocation-model": "static",
     "target-pointer-width": 64,

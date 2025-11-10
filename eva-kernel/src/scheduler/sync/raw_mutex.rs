@@ -109,3 +109,11 @@ unsafe impl lock_api::RawMutex for RawMutex {
         self.locked.load(Ordering::SeqCst)
     }
 }
+
+unsafe impl lock_api::RawMutexFair for RawMutex {
+    unsafe fn unlock_fair(&self) {
+        unsafe {
+            lock_api::RawMutex::unlock(self);
+        }
+    }
+}

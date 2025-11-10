@@ -24,15 +24,11 @@ impl Links {
     }
 
     unsafe fn next(ptr: NonNull<Self>) -> Option<NonNull<Self>> {
-        unsafe {
-            ptr.as_ref().next.get()
-        }
+        unsafe { ptr.as_ref().next.get() }
     }
 
     unsafe fn prev(ptr: NonNull<Self>) -> Option<NonNull<Self>> {
-        unsafe {
-            ptr.as_ref().prev.get()
-        }
+        unsafe { ptr.as_ref().prev.get() }
     }
 }
 
@@ -88,6 +84,14 @@ impl RawLinkedList {
             self.link2(prev, Some(middle));
             self.link2(Some(middle), next);
         }
+    }
+
+    fn head(&self) -> Option<NonNull<Links>> {
+        self.head.get()
+    }
+
+    fn tail(&self) -> Option<NonNull<Links>> {
+        self.tail.get()
     }
 
     fn iter(&self) -> impl Iterator<Item = NonNull<Links>> {
@@ -235,6 +239,16 @@ impl<T: LinkedListAdapter> TypedLinkedList<T> {
     }
 
     #[inline(always)]
+    fn head(&self) -> Option<NonNull<T::Node>> {
+        self.inner.head().map(Self::links_to_node)
+    }
+
+    #[inline(always)]
+    fn tail(&self) -> Option<NonNull<T::Node>> {
+        self.inner.tail().map(Self::links_to_node)
+    }
+
+    #[inline(always)]
     fn iter(&self) -> impl Iterator<Item = NonNull<T::Node>> {
         self.inner.iter().map(Self::links_to_node)
     }
@@ -296,6 +310,18 @@ impl<T: LinkedListAdapter> StackLinkedList<T> {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub unsafe fn head<'a>(&'a self) -> Option<Pin<&'a T::Node>> {
+        self.0
+            .head()
+            .map(|ptr| unsafe { Pin::new_unchecked(ptr.as_ref()) })
+    }
+
+    pub unsafe fn tail<'a>(&'a self) -> Option<Pin<&'a T::Node>> {
+        self.0
+            .tail()
+            .map(|ptr| unsafe { Pin::new_unchecked(ptr.as_ref()) })
     }
 
     pub unsafe fn iter<'a>(&'a self) -> impl Iterator<Item = Pin<&'a T::Node>> {
@@ -378,15 +404,15 @@ impl<T: HeapLinkedListAdapter> HeapLinkedList<T> {
     }
 
     pub fn pop_front(&self) -> Option<T::Handle> {
-        self.0.pop_front().map(|ptr| unsafe {
-            T::handle_from_ptr(ptr)
-        })
+        self.0
+            .pop_front()
+            .map(|ptr| unsafe { T::handle_from_ptr(ptr) })
     }
 
     pub fn pop_back(&self) -> Option<T::Handle> {
-        self.0.pop_back().map(|ptr| unsafe {
-            T::handle_from_ptr(ptr)
-        })
+        self.0
+            .pop_back()
+            .map(|ptr| unsafe { T::handle_from_ptr(ptr) })
     }
 
     pub unsafe fn remove(&self, node: T::Handle) {

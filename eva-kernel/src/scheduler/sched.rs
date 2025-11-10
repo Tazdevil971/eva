@@ -1,10 +1,10 @@
 use core::cell::Cell;
 
-use crate::scheduler;
 use crate::scheduler::thread::{ThreadList, ThreadPtr};
 use crate::utils::assert::harden_assert;
 use crate::utils::bitset::Bitset32;
 use crate::utils::linked_list::HeapLinkedList;
+use crate::{kdbg, scheduler};
 
 /// Internal mutable thread structure.
 pub struct Sched {
@@ -28,7 +28,7 @@ impl Sched {
         self.idle.set(Some(thread));
     }
 
-    pub unsafe fn push_thread(&self, thread: ThreadPtr) {
+    pub unsafe fn add_thread(&self, thread: ThreadPtr) {
         let prio = unsafe { thread.priority() };
         if prio == scheduler::IDLE_PRIORITY {
             // This is the idle thread
@@ -46,7 +46,7 @@ impl Sched {
         self.set.insert(prio as usize);
     }
 
-    pub unsafe fn pop_thread(&self) -> ThreadPtr {
+    pub unsafe fn pop_next_thread(&self) -> ThreadPtr {
         if let Some(prio) = self.set.highest() {
             let list = unsafe { self.queues.get_unchecked(prio) };
 

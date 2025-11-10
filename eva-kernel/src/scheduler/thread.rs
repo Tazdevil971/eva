@@ -7,9 +7,9 @@ use core::{fmt, mem};
 
 use crate::portability::{self, Impl as _};
 
-use crate::scheduler;
 use crate::scheduler::pause::{PauseCell, PauseToken, with_pause, yield_now_from_paused};
-use crate::utils::linked_list::{Links, LinkedListAdapter, HeapLinkedListAdapter};
+use crate::utils::linked_list::{HeapLinkedListAdapter, LinkedListAdapter, Links};
+use crate::{kdbg, scheduler};
 
 /// Thread entrypoint function.
 pub type ThreadFn = unsafe extern "C" fn(*mut ());

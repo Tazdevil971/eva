@@ -63,7 +63,7 @@ SECTIONS
     
 
     /* We reserve 16KB for the IRQ stack */
-    __irq_stack_size = 16 * 1024;
+    __irq_stack_size = 64 * 1024;
 
     __heap_end = ORIGIN(SRAM) + LENGTH(SRAM) - __irq_stack_size;
     __irq_stack_top = ORIGIN(SRAM) + LENGTH(SRAM);

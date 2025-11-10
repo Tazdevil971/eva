@@ -1,6 +1,6 @@
 #![no_std]
 use core::alloc::Layout;
-use core::arch::{asm, global_asm};
+use core::arch::{asm, global_asm, naked_asm};
 use core::fmt;
 use core::mem::size_of;
 use core::ptr::{self, addr_of_mut};
@@ -11,8 +11,81 @@ use eva_kernel::scheduler::thread;
 use eva_kernel::{allocator, kdbg, kprint, kprintln, portability, scheduler};
 
 unsafe extern "C" {
-    unsafe fn Reset();
     unsafe fn SVCall();
+}
+
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+unsafe extern "C" fn Reset() {
+    naked_asm!(
+        // Disable interrupts right out of reset
+        "
+        cpsid i
+        ",
+        // Initialize .bss
+        "
+        ldr r0, =__sbss
+        ldr r1, =__ebss
+        movs r2, #0
+        0:
+        cmp r1, r0
+        beq 1f
+        stm r0!, {{r2}}
+        b 0b
+        1:
+        ",
+        // Initialize .data
+        "
+        ldr r0, =__sdata
+        ldr r1, =__edata
+        ldr r2, =__sidata
+        0:
+        cmp r1, r0
+        beq 1f
+        ldm r2!, {{r3}}
+        stm r0!, {{r3}}
+        b 0b
+        1:
+        ",
+        // Enable full CP10/CP11 (FPU) access
+        "
+        ldr r0, =0xe000ed88
+        ldr r1, [r0]
+        orr r1, r1, #(0b1111 << 20)
+        str r1, [r0]
+        dsb
+        isb
+        ",
+        // Perform early system initialization
+        "
+        bl {init_stage0}
+        ",
+        // Perform kernel initialization
+        "
+        bl {init_stage1}
+        ",
+        // Jump to the first thread
+        "
+        ldr r4, ={switchctx}
+        ldr r4, [r4]
+        ldr r4, [r4]
+        
+        ldmia r4, {{r0-r3}}
+        ldr r12, [r4, #20]
+        ldr lr, [r4, #24]
+
+        msr psp, r4
+        movs r4, #2
+        msr control, r4
+        isb
+        cpsie i
+        blx lr
+        bkpt
+        ",
+        switchctx = sym SWITCHCTX,
+        init_stage0 = sym init_stage0,
+        init_stage1 = sym init_stage1
+    );
 }
 
 #[repr(C)]
@@ -42,82 +115,6 @@ static __EXCEPTIONS: [Vector; 15] = [
     Vector { handler: PendSV },
     Vector { handler: SysTick },
 ];
-
-global_asm!(
-    "
-    .global Reset
-    .type Reset,%function
-    .thumb_func
-    Reset:
-    ",
-    // Disable interrupts right out of reset
-    "
-    cpsid i
-    ",
-    // Initialize .bss
-    "
-    ldr r0, =__sbss
-    ldr r1, =__ebss
-    movs r2, #0
-    0:
-    cmp r1, r0
-    beq 1f
-    stm r0!, {{r2}}
-    b 0b
-    1:
-    ",
-    // Initialize .data
-    "
-    ldr r0, =__sdata
-    ldr r1, =__edata
-    ldr r2, =__sidata
-    0:
-    cmp r1, r0
-    beq 1f
-    ldm r2!, {{r3}}
-    stm r0!, {{r3}}
-    b 0b
-    1:
-    ",
-    // Enable full CP10/CP11 (FPU) access
-    "
-    ldr r0, =0xe000ed88
-    ldr r1, [r0]
-    orr r1, r1, #(0b1111 << 20)
-    str r1, [r0]
-    dsb
-    isb
-    ",
-    // Perform early system initialization
-    "
-    bl {init_stage0}
-    ",
-    // Perform kernel initialization
-    "
-    bl {init_stage1}
-    ",
-    // Jump to the first thread
-    "
-    ldr r4, ={switchctx}
-    ldr r4, [r4]
-    ldr r4, [r4]
-    
-    ldmia r4, {{r0-r3}}
-    ldr r12, [r4, #20]
-    ldr lr, [r4, #24]
-
-    msr psp, r4
-    movs r4, #2
-    msr control, r4
-    isb
-    cpsie i
-    blx lr
-    bkpt
-    ",
-    switchctx = sym SWITCHCTX,
-    init_stage0 = sym init_stage0,
-    init_stage1 = sym init_stage1
-);
 
 unsafe extern "C" fn init_stage0() {
     unsafe {
@@ -206,6 +203,27 @@ mod interrupt {
 
         f()
     }
+
+    struct Cs;
+
+    unsafe impl critical_section::Impl for Cs {
+        unsafe fn acquire() -> bool {
+            let primask = unsafe { eva_pac::primask::read().primask() };
+            disable();
+
+            primask
+        }
+
+        unsafe fn release(restore_state: bool) {
+            if !restore_state {
+                unsafe {
+                    enable();
+                }
+            }
+        }
+    }
+
+    critical_section::set_impl!(Cs);
 }
 
 fn kprint_fmt(args: fmt::Arguments) {
@@ -229,7 +247,7 @@ unsafe extern "C" fn init_stage1() {
         up: {
             0: {
                 size: 1024,
-                mode: rtt_target::ChannelMode::NoBlockSkip,
+                mode: rtt_target::ChannelMode::BlockIfFull,
                 name: "Terminal"
             }
         }
@@ -284,14 +302,14 @@ unsafe extern "C" fn init_stage2(_: *mut ()) {
             // Setup reload value
             eva_pac::SYST
                 .rvr()
-                .write(eva_pac::syst::RvrBits::default().set_reload(tenms / 10));
+                .write(eva_pac::syst::RvrBits::default().set_reload(tenms));
 
             // Final configuration and timer start
             eva_pac::SYST.csr().write({
                 use eva_pac::syst::*;
                 CsrBits::default()
                     .set_countflag(false)
-                    .set_clksource(ClksourceVal::Processor)
+                    .set_clksource(ClksourceVal::External)
                     .set_tickint(true)
                     .set_enable(true)
             });
@@ -342,14 +360,6 @@ unsafe extern "C" fn UsageFault() {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn DefaultHandler() {
-    loop {}
-}
-
-// TODO: This should really not be here
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    kprintln!("{}", info);
-
     loop {}
 }
 
@@ -450,47 +460,43 @@ impl portability::Impl for PortabilityImpl {
     }
 
     fn get_time() -> Duration {
-        Duration::from_millis(TICKS.load(Ordering::SeqCst) as _)
+        // TODO: This could be more accurate!
+        Duration::from_millis(MS.load(Ordering::SeqCst) as _)
     }
 }
 
 eva_kernel::set_global_portability_impl!(PortabilityImpl);
 
-unsafe extern "C" {
-    unsafe fn PendSV();
-}
-
 static mut SWITCHCTX: *mut u8 = ptr::null_mut();
 
-global_asm!(
-    "
-    .global PendSV
-    .type PendSV,%function
-    .thumb_func
-    PendSV:
-    ",
-    // Save current context
-    "
-    ldr r0, ={switchctx}
-    ldr r0, [r0]
-    mrs r1, psp
-    stmia r0, {{r1,r4-r11,lr}}
-    ",
-    // Call into the scheduler
-    "
-    bl {schedule}
-    ",
-    // Restore new context
-    "
-    ldr r0, ={switchctx}
-    ldr r0, [r0]
-    ldmia r0, {{r1,r4-r11,lr}}
-    msr psp, r1
-    bx lr
-    ",
-    switchctx = sym SWITCHCTX,
-    schedule = sym scheduler_tick
-);
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+unsafe extern "C" fn PendSV() {
+    naked_asm!(
+        // Save current context
+        "
+        ldr r0, ={switchctx}
+        ldr r0, [r0]
+        mrs r1, psp
+        stmia r0, {{r1,r4-r11,lr}}
+        dmb
+        ",
+        // Call into the scheduler
+        "
+        bl {scheduler_tick}
+        ",
+        // Restore new context
+        "
+        ldr r0, ={switchctx}
+        ldr r0, [r0]
+        ldmia r0, {{r1,r4-r11,lr}}
+        msr psp, r1
+        bx lr
+        ",
+        switchctx = sym SWITCHCTX,
+        scheduler_tick = sym scheduler_tick
+    );
+}
 
 unsafe extern "C" fn scheduler_tick() {
     unsafe {
@@ -498,9 +504,16 @@ unsafe extern "C" fn scheduler_tick() {
     }
 }
 
-static TICKS: AtomicU32 = AtomicU32::new(0);
+static MS: AtomicU32 = AtomicU32::new(0);
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn SysTick() {
-    TICKS.fetch_add(1, Ordering::SeqCst);
+    MS.fetch_add(10, Ordering::SeqCst);
+
+    // Pend a yield
+    unsafe {
+        eva_pac::SCB
+            .icsr()
+            .write(eva_pac::scb::IcsrBits::default().set_pendsvset(true));
+    }
 }

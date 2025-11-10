@@ -1,13 +1,14 @@
 /// Scheduler pause primitives.
 pub mod pause;
-/// Low level threading interface.
-pub mod thread;
-// Time is WIP
-// /// Time driver.
-// pub mod time;
 /// Synchronization primitives.
 pub mod sync;
+/// Low level threading interface.
+pub mod thread;
+/// Time driver.
+pub mod time;
 
+/// Internal panic hook for the scheduler.
+mod panic;
 /// Scheduler implementation.
 mod sched;
 
@@ -15,8 +16,8 @@ use core::ptr;
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use pause::{PauseCell, PauseToken, with_pause};
-use thread::{AtomicThreadPtr, ThreadPtr};
 use sched::Sched;
+use thread::{AtomicThreadPtr, ThreadPtr};
 
 use crate::utils::assert::harden_assert;
 
@@ -28,8 +29,8 @@ pub fn is_valid_prio(prio: i8) -> bool {
     prio >= MIN_PRIORITY && prio <= MAX_PRIORITY
 }
 
-const STATE_PAUSED_BIT: u8 = 1 << 0;
-const STATE_RUNNING_BIT: u8 = 1 << 1;
+const STATE_RUNNING_BIT: u8 = 1 << 0;
+const STATE_PAUSED_BIT: u8 = 1 << 1;
 const STATE_PEND_BIT: u8 = 1 << 2;
 
 /// Scheduler data structure
@@ -103,6 +104,11 @@ pub fn pend_yield(_token: PauseToken) {
     SCHEDULER.state.fetch_or(STATE_PEND_BIT, Ordering::SeqCst);
 }
 
+/// Shutdown the scheduler due to a panic
+fn panic_shutdown() {
+    SCHEDULER.state.store(0, Ordering::SeqCst);
+}
+
 /// Set the currently active thread.
 unsafe fn set_current_paused(_token: PauseToken, thread: ThreadPtr) {
     unsafe {
@@ -146,8 +152,13 @@ unsafe fn add_ready_paused(token: PauseToken, thread: ThreadPtr) {
         "cannot add to ready queue idle thread"
     );
 
+    harden_assert!(
+        unsafe { thread.tcb().flags.ready(token) },
+        "cannot add to ready queue a non-ready thread"
+    );
+
     unsafe {
-        SCHEDULER.sched.borrow(token).push_thread(thread);
+        SCHEDULER.sched.borrow(token).add_thread(thread);
     }
 }
 
@@ -155,13 +166,11 @@ fn run_scheduler_paused(token: PauseToken) {
     let cur = unsafe { SCHEDULER.cur.load(Ordering::Relaxed).unwrap_unchecked() };
     if unsafe { cur.tcb().flags.ready(token) } {
         unsafe {
-            SCHEDULER.sched.borrow(token).push_thread(cur);
+            SCHEDULER.sched.borrow(token).add_thread(cur);
         }
     }
 
-    let next = unsafe {
-        SCHEDULER.sched.borrow(token).pop_thread()
-    };
+    let next = unsafe { SCHEDULER.sched.borrow(token).pop_next_thread() };
 
     harden_assert!(
         unsafe { next.tcb().flags.ready(token) },
@@ -187,7 +196,9 @@ pub unsafe fn tick() {
 
     if (state & STATE_PAUSED_BIT) != 0 {
         // Some thread has paused the system, pend a yield and do nothing
-        SCHEDULER.state.store(STATE_PEND_BIT, Ordering::SeqCst);
+        SCHEDULER
+            .state
+            .store(state | STATE_PEND_BIT, Ordering::SeqCst);
     } else {
         // The scheduler is actually running
         let token = unsafe {
@@ -195,6 +206,9 @@ pub unsafe fn tick() {
             PauseToken::new()
         };
 
+        let now = crate::time::get_time();
+
+        time::run_time_driver_paused(token, now);
         run_scheduler_paused(token);
     }
 }
@@ -236,7 +250,6 @@ pub unsafe fn init() {
 
 /// Internal function to run inside the idle thread.
 fn idle_task() -> ! {
-    loop {
-        thread::yield_now();
-    }
+    thread::yield_now();
+    loop {}
 }

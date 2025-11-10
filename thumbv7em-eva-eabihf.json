@@ -12,6 +12,7 @@
     "llvm-floatabi": "hard",
     "llvm-target": "thumbv7em-none-eabihf",
     "max-atomic-width": 32,
+    "disable-redzone": true,
     "panic-strategy": "abort",
     "relocation-model": "static",
     "target-pointer-width": 32,

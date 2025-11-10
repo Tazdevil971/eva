@@ -12,6 +12,7 @@ pub mod kprint;
 pub mod portability;
 /// Scheduler and threading primitives.
 pub mod scheduler;
+pub mod time;
 
 /// Internal utilities.
 mod utils;

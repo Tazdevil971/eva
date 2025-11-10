@@ -4,7 +4,7 @@ members = [
     "eva-pac",
     "eva-kernel",
     "eva-bsp/stm32f767",
-    "eva-bsp/linux",
+    # "eva-bsp/linux",
     "examples/hello-world"
 ]
 
@@ -12,7 +12,7 @@ members = [
 eva-pac = { path = "eva-pac" }
 eva-kernel = { path = "eva-kernel" }
 eva-bsp-stm32f767 = { path = "eva-bsp/stm32f767" }
-eva-bsp-linux = { path = "eva-bsp/linux" }
+# eva-bsp-linux = { path = "eva-bsp/linux" }
 
 rtt-target = "0.6.1"
 critical-section = "1.0.0"

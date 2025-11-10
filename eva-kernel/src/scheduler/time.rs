@@ -1,78 +1,119 @@
+use core::cell::Cell;
+use core::mem;
+use core::pin::pin;
 use core::time::Duration;
 
-use crate::linked_list::{LinkedList, Node};
-use crate::pause::{PauseToken, with_pause};
-use crate::portability;
-use crate::thread::{self, ThreadPtr};
+use crate::scheduler::pause::{PauseCell, PauseToken, with_pause};
+use crate::scheduler::thread::{self, ThreadPtr};
+use crate::utils::linked_list::*;
 
-pub struct TimeNode {
+struct SleepList;
+
+unsafe impl LinkedListAdapter for SleepList {
+    type Node = TimedWakeup;
+
+    fn offset_to_links() -> usize {
+        mem::offset_of!(TimedWakeup, links)
+    }
+}
+
+pub(super) struct TimedWakeup {
+    links: Links,
     thread: ThreadPtr,
-    when: Duration,
+    expire: Duration,
+    signal: PauseCell<Cell<bool>>,
 }
 
-static TIME_QUEUE: LinkedList<TimeNode> = LinkedList::new();
-
-/// Query the time driver for the current time.
-pub fn get_time() -> Duration {
-    portability::get_time()
-}
-
-pub(crate) fn run_time_driver(token: PauseToken) {
-    let time = get_time();
-
-    while let Some(first) = unsafe {
-        // SAFETY: The node never escapes this section
-        TIME_QUEUE.front(token)
-    } {
-        // Break out if we find something that hasn't expired yet
-        if first.value().when <= time {
-            break;
-        }
-
-        unsafe {
-            // SAFETY: We just got this node from the queue, so it must be valid
-            TIME_QUEUE.remove(token, first);
-        }
+impl TimedWakeup {
+    pub(super) fn is_expired(&self, token: PauseToken) -> bool {
+        self.signal.get(token)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimedResult {
-    Ok,
-    Timeout,
+struct TimeDriver {
+    sleep_list: StackLinkedList<SleepList>,
 }
 
-pub fn timed_suspend_and_yield_paused(token: PauseToken, when: Duration) -> TimedResult {
-    // We already surpassed the end time
-    if when <= get_time() {
-        return TimedResult::Timeout;
-    }
+static TIME_DRIVER: PauseCell<TimeDriver> = PauseCell::new(TimeDriver {
+    sleep_list: StackLinkedList::empty(),
+});
 
-    let thread = thread::current();
+pub(super) fn with_timed_wakeup<F, T>(token: PauseToken, expire: Duration, f: F) -> T
+where
+    F: FnOnce(PauseToken, &TimedWakeup) -> T,
+{
+    let node = TimedWakeup {
+        links: Links::unlinked(),
+        thread: thread::current(),
+        expire,
+        signal: PauseCell::new(Cell::new(false)),
+    };
 
-    Node::new(TimeNode { thread, when }, |node| {
-        unsafe {
-            // SAFETY: The node is unlinked before being destroyed
-            TIME_QUEUE.insert_sorted_by_key(token, node, |node| node.value().when);
-        }
+    let node = pin!(node);
+    let node = node.as_ref();
 
-        thread::suspend_and_yield_paused(token);
+    let sleep_list = &TIME_DRIVER.borrow(token).sleep_list;
 
-        if unsafe {
-            // SAFETY: node is either unlinked or linked to this queue
-            TIME_QUEUE.try_remove(token, node)
-        } {
-            TimedResult::Timeout
+    unsafe {
+        let point = sleep_list.iter().find(|node2| node2.expire > expire);
+        if let Some(point) = point {
+            sleep_list.insert_before(point, node);
         } else {
-            TimedResult::Ok
+            sleep_list.push_back(node);
         }
+    }
+
+    let ret = f(token, &*node);
+
+    if !node.signal.get(token) {
+        unsafe {
+            // SAFETY: ...
+            sleep_list.remove(node);
+        }
+    }
+
+    ret
+}
+
+pub fn sleep(duration: Duration) {
+    sleep_until(crate::time::get_time() + duration);
+}
+
+pub fn sleep_until(expire: Duration) {
+    with_pause(|token| {
+        with_timed_wakeup(token, expire, |_, wakeup| {
+            while !wakeup.is_expired(token) {
+                thread::suspend_and_yield_paused(token);
+            }
+        })
     })
 }
 
-pub fn sleep_until_paused(token: PauseToken, when: Duration) {
-    while timed_suspend_and_yield_paused(token, when) != TimedResult::Timeout {}
-}
+pub(super) fn run_time_driver_paused(token: PauseToken, instant: Duration) {
+    let sleep_list = &TIME_DRIVER.borrow(token).sleep_list;
 
-pub fn sleep_until(when: Duration) {
-    with_pause(|token| sleep_until_paused(token, when));
+    loop {
+        let head = unsafe {
+            // SAFETY: ...
+            sleep_list.head()
+        };
+
+        if let Some(head) = head {
+            if head.expire > instant {
+                break;
+            }
+        } else {
+            break;
+        }
+
+        let head = unsafe {
+            // SAFETY: ...
+            sleep_list.pop_front().unwrap()
+        };
+
+        head.signal.borrow(token).set(true);
+        unsafe {
+            head.thread.resume_paused(token);
+        }
+    }
 }

@@ -10,3 +10,4 @@ eva-pac = { workspace = true }
 eva-kernel = { workspace = true }
 
 rtt-target = { workspace = true }
+critical-section = { workspace = true, features = ["restore-state-bool"] }

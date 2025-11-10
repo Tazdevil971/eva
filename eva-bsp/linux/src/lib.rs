@@ -3,12 +3,19 @@ use core::alloc::Layout;
 use core::ffi::{c_char, c_int, c_void};
 use core::time::Duration;
 use core::{fmt, mem, ptr};
+use core::arch::naked_asm;
 
 use eva_kernel::scheduler::thread;
 use eva_kernel::{allocator, kprintln, scheduler};
 
+static mut GLOBAL_TIMER: libc::timer_t = ptr::null_mut();
+
 fn scheduler_tick_signum() -> i32 {
     libc::SIGRTMIN() + 0
+}
+
+fn timer_tick_signum() -> i32 {
+    libc::SIGRTMIN() + 1
 }
 
 #[unsafe(no_mangle)]
@@ -69,7 +76,7 @@ fn init_stage1() {
             sa_sigaction: scheduler_tick as _,
             sa_restorer: None,
             sa_mask: mask,
-            sa_flags: libc::SA_ONSTACK | libc::SA_SIGINFO,
+            sa_flags: libc::SA_ONSTACK | libc::SA_SIGINFO | libc::SA_RESTART,
         };
 
         unsafe {
@@ -91,7 +98,51 @@ fn init_stage1() {
 
 unsafe extern "C" fn init_stage2(_: *mut ()) {
     // Yay this is the first thread!
-    // TODO: Initialize preemption through timer_create
+
+    // Install timer tick signal
+    {
+        let mut mask = unsafe { mem::zeroed() };
+        unsafe {
+            libc::sigemptyset(&mut mask);
+            libc::sigaddset(&mut mask, scheduler_tick_signum());
+        }
+
+        let new = libc::sigaction {
+            sa_sigaction: timer_tick as _,
+            sa_restorer: None,
+            sa_mask: mask,
+            sa_flags: libc::SA_ONSTACK | libc::SA_SIGINFO | libc::SA_RESTART,
+        };
+
+        unsafe {
+            libc::sigaction(timer_tick_signum(), &new, ptr::null_mut());
+        }
+    }
+
+    // Initialize preemption timer
+    {
+        unsafe {
+            let mut event: libc::sigevent = unsafe { mem::zeroed() };
+            event.sigev_notify = libc::SIGEV_SIGNAL;
+            event.sigev_signo = timer_tick_signum();
+
+            libc::timer_create(
+                libc::CLOCK_THREAD_CPUTIME_ID,
+                &mut event,
+                &raw mut GLOBAL_TIMER,
+            );
+
+            let mut period: libc::timespec = unsafe { mem::zeroed() };
+            period.tv_sec = 0;
+            period.tv_nsec = 10_000_000;
+
+            let new = libc::itimerspec {
+                it_interval: period,
+                it_value: period,
+            };
+            libc::timer_settime(GLOBAL_TIMER, 0, &new, ptr::null_mut());
+        }
+    }
 
     kprintln!("-> EVA scheduler [online]");
     kprintln!("Pivoting control to user code, good luck!");
@@ -129,13 +180,6 @@ fn kprint_fmt(args: fmt::Arguments) {
     unsafe {
         libc::sigprocmask(libc::SIG_SETMASK, &old, ptr::null_mut());
     }
-}
-
-#[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    kprintln!("{}", info);
-
-    loop {}
 }
 
 struct PortabilityImpl;
@@ -196,23 +240,73 @@ impl eva_kernel::portability::Impl for PortabilityImpl {
 
 eva_kernel::set_global_portability_impl!(PortabilityImpl);
 
+static mut OLD_SWITCHCTX: *mut libc::ucontext_t = ptr::null_mut();
 static mut SWITCHCTX: *mut libc::ucontext_t = ptr::null_mut();
+
+unsafe fn push_call(ucontext: *mut libc::ucontext_t, func: unsafe extern "C" fn()) {
+    // This is pretty much dark magic, we are modifying opaque data structures and injecting a fake return address to invoke a function before actually returning to the previous executing function.
+    unsafe {
+        let rip = (*ucontext).uc_mcontext.gregs[libc::REG_RIP as usize];
+        let rsp = (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize];
+        
+        let rsp = rsp - 8;
+        (rsp as *mut i64).write_unaligned(rip);
+
+        (*ucontext).uc_mcontext.gregs[libc::REG_RIP as usize] = func as _;
+        (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize] = rsp;
+    }
+}
+
+#[unsafe(naked)]
+unsafe extern "C" fn swapcontext() {
+    naked_asm!(
+        "push rax",
+        "push rdi",
+        "push rsi",
+        "push rdx",
+        "push rcx",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        "mov rdi, {old_switchctx}",
+        "mov rsi, {switchctx}",
+        "call {swapcontext}",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rcx",
+        "pop rdx",
+        "pop rsi",
+        "pop rdi",
+        "pop rax",
+        "ret",
+        old_switchctx = sym OLD_SWITCHCTX,
+        switchctx = sym SWITCHCTX,
+        swapcontext = sym libc::swapcontext
+    );
+}
 
 unsafe extern "C" fn scheduler_tick(
     _sig: c_int,
     _info: *mut libc::siginfo_t,
-    ucontext: *mut c_void,
+    ucontext: *mut libc::ucontext_t,
 ) {
-    let context_ptr = ucontext as *mut libc::ucontext_t;
-
     unsafe {
         let old_ctx = SWITCHCTX;
-        *SWITCHCTX = *context_ptr;
+        *SWITCHCTX = *ucontext;
         scheduler::tick();
 
-        // For some reason, setcontext with the same ucontext that got as a parameter of this function segfaults
         if old_ctx != SWITCHCTX {
-            libc::setcontext(SWITCHCTX);
+            OLD_SWITCHCTX = old_ctx;
+            push_call(ucontext, swapcontext);
         }
+    }
+}
+
+unsafe extern "C" fn timer_tick(_sig: c_int, _info: *mut libc::siginfo_t, _ucontext: *mut libc::ucontext_t) {
+    unsafe {
+        libc::kill(0, scheduler_tick_signum());
     }
 }

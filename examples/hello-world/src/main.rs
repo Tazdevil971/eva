@@ -1,7 +1,9 @@
 #![no_std]
 #![no_main]
 
-extern crate eva_bsp_linux;
+extern crate eva_bsp_stm32f767;
+
+use core::time::Duration;
 
 use eva_kernel::kprintln;
 use eva_kernel::scheduler::sync::mutex::Mutex;
@@ -29,6 +31,16 @@ fn main() {
         thread.join();
     }
     kprintln!("7) After preempt!");
+
+    let thread2 = unsafe { thread::spawn(4096 * 4, 0, other_other_thread, core::ptr::null_mut()) };
+
+    loop {
+        kprintln!(
+            "8) Main thread! {}",
+            eva_kernel::time::get_time().as_secs_f32()
+        );
+        eva_kernel::scheduler::time::sleep(Duration::from_millis(1666));
+    }
 }
 
 extern "C" fn other_thread(_user: *mut ()) {
@@ -36,4 +48,14 @@ extern "C" fn other_thread(_user: *mut ()) {
     let mut lock = GLOBAL_VAR.lock();
     *lock += 1;
     kprintln!("6) Variable: {}", lock);
+}
+
+extern "C" fn other_other_thread(_user: *mut ()) {
+    loop {
+        kprintln!(
+            "9) Other other thread! {}",
+            eva_kernel::time::get_time().as_secs_f32()
+        );
+        eva_kernel::scheduler::time::sleep(Duration::from_millis(1000));
+    }
 }
