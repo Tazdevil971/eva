@@ -1,7 +1,8 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-use crate::scheduler::{self, thread};
+use crate::rt;
+use crate::utils::scopeguard::defer;
 
 mod cell;
 
@@ -12,18 +13,17 @@ pub fn with_pause<F, T>(f: F) -> T
 where
     F: FnOnce(PauseToken) -> T,
 {
-    struct UnpauseGuard;
+    let has_paused = rt::try_pause().is_ok();
 
-    impl Drop for UnpauseGuard {
-        fn drop(&mut self) {
+    defer! {
+        if has_paused {
             unsafe {
                 // SAFETY: We destroyed our token, so now we can safely unpause
-                scheduler::unpause();
+                rt::try_unpause().expect("kernel was already unpaused");
             }
         }
     }
 
-    let _guard = scheduler::try_pause().map(|_| UnpauseGuard);
     f(unsafe {
         // SAFETY: The scheduler is paused at this point
         PauseToken::new()
@@ -32,22 +32,17 @@ where
 
 /// Yield now from a paused state, first releasing the pause, yielding, and resuming.
 pub fn yield_now_from_paused(_token: PauseToken) {
-    struct PauseGuard;
-
-    impl Drop for PauseGuard {
-        fn drop(&mut self) {
-            let _ = scheduler::try_pause();
-        }
-    }
-
     unsafe {
         // SAFETY: We did not destroy the token, but no code is allowed to access any PauseCell
         // during the following section
-        scheduler::unpause();
+        rt::try_unpause().expect("kernel was already unpaused");
     }
 
-    let _guard = PauseGuard;
-    thread::yield_now();
+    defer! {
+        let _ = rt::try_pause();
+    }
+
+    rt::yield_now();
 }
 
 /// Run the given function only if the scheduler is already paused.
@@ -55,7 +50,7 @@ pub fn if_paused<F, T>(f: F) -> Option<T>
 where
     F: FnOnce(PauseToken) -> T,
 {
-    if scheduler::is_paused() {
+    if rt::is_paused() {
         Some(f(unsafe {
             // SAFETY: The scheduler is paused at this point
             PauseToken::new()

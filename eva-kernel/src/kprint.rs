@@ -1,10 +1,10 @@
 #[doc(hidden)]
 pub mod __private {
-    use crate::portability::Impl as _;
+    use crate::port::Impl as _;
     use core::fmt::Arguments;
 
     pub fn print(args: Arguments) {
-        crate::portability::GlobalImpl::kprint_fmt(args);
+        crate::port::GlobalImpl::kprint_fmt(args);
     }
 }
 

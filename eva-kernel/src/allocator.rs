@@ -4,7 +4,7 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::cell::RefCell;
 use core::ptr::{self, NonNull};
 
-use crate::scheduler::pause::{PauseCell, with_pause};
+use crate::rt::pause::{PauseCell, with_pause};
 
 struct KAlloc(PauseCell<RefCell<Heap>>);
 

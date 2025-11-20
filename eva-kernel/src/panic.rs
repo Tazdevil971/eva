@@ -4,8 +4,8 @@ use crate::kprintln;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    crate::rt::abort();
+    
     kprintln!("{}", info);
-
-    super::panic_shutdown();
     loop {}
 }

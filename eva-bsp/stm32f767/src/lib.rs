@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 
 use eva_kernel::scheduler::thread;
-use eva_kernel::{allocator, kdbg, kprint, kprintln, portability, scheduler};
+use eva_kernel::{allocator, kdbg, kprint, kprintln, port, scheduler};
 
 unsafe extern "C" {
     unsafe fn SVCall();
@@ -284,7 +284,7 @@ unsafe extern "C" fn init_stage1() {
             thread::spawn(4096, 0, init_stage2, 0 as _);
 
             // Launch the scheduler
-            scheduler::init();
+            scheduler::init(scheduler::CheesyBreadToken);
         }
     }
 }
@@ -395,7 +395,7 @@ struct ArmIrqStack {
 
 struct PortabilityImpl;
 
-impl portability::Impl for PortabilityImpl {
+impl port::Impl for PortabilityImpl {
     fn switchctx_layout() -> Layout {
         Layout::new::<SwitchCtx>()
     }

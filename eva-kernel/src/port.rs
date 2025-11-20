@@ -12,10 +12,15 @@ pub trait Impl {
         switchctx_ptr: *mut u8,
         stack_ptr: *mut u8,
         stack_size: usize,
-        entry: unsafe extern "C" fn(*mut (), *mut ()) -> !,
+        entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
         arg1: *mut (),
         arg2: *mut (),
+        arg3: *mut (),
+        arg4: *mut (),
     );
+
+    /// Drop the switchctx of a thread.
+    unsafe fn drop_switchctx(switchctx_ptr: *mut u8);
 
     /// Set the global switchctx pointer.
     unsafe fn set_global_switchctx(switchctx_ptr: *mut u8);
@@ -37,7 +42,7 @@ macro_rules! set_global_portability_impl {
         const _: () = {
             #[unsafe(no_mangle)]
             unsafe fn __eva_kernel_1_0_switchctx_layout() -> core::alloc::Layout {
-                unsafe { <$t as $crate::portability::Impl>::switchctx_layout() }
+                unsafe { <$t as $crate::port::Impl>::switchctx_layout() }
             }
 
             #[unsafe(no_mangle)]
@@ -45,40 +50,49 @@ macro_rules! set_global_portability_impl {
                 switchctx_ptr: *mut u8,
                 stack_ptr: *mut u8,
                 stack_size: usize,
-                entry: unsafe extern "C" fn(*mut (), *mut ()) -> !,
+                entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
                 arg1: *mut (),
                 arg2: *mut (),
+                arg3: *mut (),
+                arg4: *mut (),
             ) {
                 unsafe {
-                    <$t as $crate::portability::Impl>::init_switchctx(
+                    <$t as $crate::port::Impl>::init_switchctx(
                         switchctx_ptr,
                         stack_ptr,
                         stack_size,
                         entry,
                         arg1,
                         arg2,
+                        arg3,
+                        arg4,
                     )
                 }
             }
 
             #[unsafe(no_mangle)]
+            unsafe fn __eva_kernel_1_0_drop_switchctx(switchctx_ptr: *mut u8) {
+                unsafe { <$t as $crate::port::Impl>::drop_switchctx(switchctx_ptr) }
+            }
+
+            #[unsafe(no_mangle)]
             unsafe fn __eva_kernel_1_0_set_global_switchctx(switchctx_ptr: *mut u8) {
-                unsafe { <$t as $crate::portability::Impl>::set_global_switchctx(switchctx_ptr) }
+                unsafe { <$t as $crate::port::Impl>::set_global_switchctx(switchctx_ptr) }
             }
 
             #[unsafe(no_mangle)]
             fn __eva_kernel_1_0_yield_now() {
-                <$t as $crate::portability::Impl>::yield_now()
+                <$t as $crate::port::Impl>::yield_now()
             }
 
             #[unsafe(no_mangle)]
             fn __eva_kernel_1_0_kprint_fmt(args: ::core::fmt::Arguments) {
-                <$t as $crate::portability::Impl>::kprint_fmt(args)
+                <$t as $crate::port::Impl>::kprint_fmt(args)
             }
 
             #[unsafe(no_mangle)]
             fn __eva_kernel_1_0_get_time() -> ::core::time::Duration {
-                <$t as $crate::portability::Impl>::get_time()
+                <$t as $crate::port::Impl>::get_time()
             }
         };
     };
@@ -99,24 +113,45 @@ impl Impl for GlobalImpl {
         switchctx_ptr: *mut u8,
         stack_ptr: *mut u8,
         stack_size: usize,
-        entry: unsafe extern "C" fn(*mut (), *mut ()) -> !,
+        entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
         arg1: *mut (),
         arg2: *mut (),
+        arg3: *mut (),
+        arg4: *mut (),
     ) {
         unsafe extern "Rust" {
             unsafe fn __eva_kernel_1_0_init_switchctx(
                 switchctx_ptr: *mut u8,
                 stack_ptr: *mut u8,
                 stack_size: usize,
-                entry: unsafe extern "C" fn(*mut (), *mut ()) -> !,
+                entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
                 arg1: *mut (),
                 arg2: *mut (),
+                arg3: *mut (),
+                arg4: *mut (),
             );
         }
 
         unsafe {
-            __eva_kernel_1_0_init_switchctx(switchctx_ptr, stack_ptr, stack_size, entry, arg1, arg2)
+            __eva_kernel_1_0_init_switchctx(
+                switchctx_ptr,
+                stack_ptr,
+                stack_size,
+                entry,
+                arg1,
+                arg2,
+                arg3,
+                arg4,
+            )
         }
+    }
+
+    unsafe fn drop_switchctx(switchctx_ptr: *mut u8) {
+        unsafe extern "Rust" {
+            unsafe fn __eva_kernel_1_0_drop_switchctx(switchctx_ptr: *mut u8);
+        }
+
+        unsafe { __eva_kernel_1_0_drop_switchctx(switchctx_ptr) }
     }
 
     unsafe fn set_global_switchctx(switchctx_ptr: *mut u8) {

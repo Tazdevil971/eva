@@ -7,6 +7,9 @@ license = "LGPL-3.0-or-later WITH LGPL-3.0-linking-exception"
 
 [dependencies]
 linked_list_allocator = { version = "0.10", default-features = false }
+scopeguard = { version = "1.2", default-features = false }
+atomic = { version = "0.6", default-features = false }
+bytemuck = { version = "1.24", default-features = false, features = ["derive"] }
 lock_api = "0.4"
 rtt-target = { workspace = true }
 critical-section = { workspace = true, features = ["restore-state-bool"] }

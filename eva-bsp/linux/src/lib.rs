@@ -1,12 +1,11 @@
 #![no_std]
 use core::alloc::Layout;
-use core::ffi::{c_char, c_int, c_void};
+use core::arch::naked_asm;
+use core::ffi::{c_char, c_int};
 use core::time::Duration;
 use core::{fmt, mem, ptr};
-use core::arch::naked_asm;
 
-use eva_kernel::scheduler::thread;
-use eva_kernel::{allocator, kprintln, scheduler};
+use eva_kernel::{allocator, kprintln, rt};
 
 static mut GLOBAL_TIMER: libc::timer_t = ptr::null_mut();
 
@@ -86,17 +85,17 @@ fn init_stage1() {
 
     // Initialize scheduler
     {
+        // Spawn first thread
+        rt::spawn(4096 * 16, 0, init_stage2, 0 as _, 0 as _, 0 as _);
+        
         unsafe {
-            // Spawn first thread
-            thread::spawn(4096 * 4, 0, init_stage2, 0 as _);
-
             // Launch the scheduler
-            scheduler::init();
+            rt::init();
         }
     }
 }
 
-unsafe extern "C" fn init_stage2(_: *mut ()) {
+unsafe extern "C" fn init_stage2(_: *mut (), _: *mut (), _: *mut ()) {
     // Yay this is the first thread!
 
     // Install timer tick signal
@@ -122,7 +121,7 @@ unsafe extern "C" fn init_stage2(_: *mut ()) {
     // Initialize preemption timer
     {
         unsafe {
-            let mut event: libc::sigevent = unsafe { mem::zeroed() };
+            let mut event: libc::sigevent = mem::zeroed();
             event.sigev_notify = libc::SIGEV_SIGNAL;
             event.sigev_signo = timer_tick_signum();
 
@@ -132,7 +131,7 @@ unsafe extern "C" fn init_stage2(_: *mut ()) {
                 &raw mut GLOBAL_TIMER,
             );
 
-            let mut period: libc::timespec = unsafe { mem::zeroed() };
+            let mut period: libc::timespec = mem::zeroed();
             period.tv_sec = 0;
             period.tv_nsec = 10_000_000;
 
@@ -184,7 +183,7 @@ fn kprint_fmt(args: fmt::Arguments) {
 
 struct PortabilityImpl;
 
-impl eva_kernel::portability::Impl for PortabilityImpl {
+impl eva_kernel::port::Impl for PortabilityImpl {
     fn switchctx_layout() -> Layout {
         Layout::new::<libc::ucontext_t>()
     }
@@ -193,9 +192,11 @@ impl eva_kernel::portability::Impl for PortabilityImpl {
         switchctx_ptr: *mut u8,
         stack_ptr: *mut u8,
         stack_size: usize,
-        entry: unsafe extern "C" fn(*mut (), *mut ()) -> !,
+        entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
         arg1: *mut (),
         arg2: *mut (),
+        arg3: *mut (),
+        arg4: *mut (),
     ) {
         let context_ptr = switchctx_ptr as *mut libc::ucontext_t;
 
@@ -208,8 +209,12 @@ impl eva_kernel::portability::Impl for PortabilityImpl {
             (*context_ptr).uc_stack.ss_flags = 0;
 
             let entry = mem::transmute(entry);
-            libc::makecontext(switchctx_ptr as _, entry, 2, arg1, arg2);
+            libc::makecontext(switchctx_ptr as _, entry, 4, arg1, arg2, arg3, arg4);
         }
+    }
+
+    unsafe fn drop_switchctx(_switchctx_ptr: *mut u8) {
+        // NO-OP, linux does not need to clean up anything
     }
 
     unsafe fn set_global_switchctx(switchctx_ptr: *mut u8) {
@@ -248,7 +253,7 @@ unsafe fn push_call(ucontext: *mut libc::ucontext_t, func: unsafe extern "C" fn(
     unsafe {
         let rip = (*ucontext).uc_mcontext.gregs[libc::REG_RIP as usize];
         let rsp = (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize];
-        
+
         let rsp = rsp - 8;
         (rsp as *mut i64).write_unaligned(rip);
 
@@ -296,7 +301,7 @@ unsafe extern "C" fn scheduler_tick(
     unsafe {
         let old_ctx = SWITCHCTX;
         *SWITCHCTX = *ucontext;
-        scheduler::tick();
+        rt::tick();
 
         if old_ctx != SWITCHCTX {
             OLD_SWITCHCTX = old_ctx;
@@ -305,7 +310,11 @@ unsafe extern "C" fn scheduler_tick(
     }
 }
 
-unsafe extern "C" fn timer_tick(_sig: c_int, _info: *mut libc::siginfo_t, _ucontext: *mut libc::ucontext_t) {
+unsafe extern "C" fn timer_tick(
+    _sig: c_int,
+    _info: *mut libc::siginfo_t,
+    _ucontext: *mut libc::ucontext_t,
+) {
     unsafe {
         libc::kill(0, scheduler_tick_signum());
     }

@@ -1,8 +1,9 @@
 use core::cell::{Cell, Ref, RefCell, RefMut, UnsafeCell};
-use core::fmt;
+use core::fmt::{self, Debug};
 
 use super::{PauseToken, if_paused};
 
+#[repr(transparent)]
 pub struct PauseCell<T> {
     inner: UnsafeCell<T>,
 }
@@ -115,15 +116,23 @@ impl<T> From<T> for PauseCell<Cell<T>> {
 
 unsafe impl<T: Send> Sync for PauseCell<T> {}
 
-impl<T: fmt::Debug> fmt::Debug for PauseCell<T> {
+impl<T: Debug> Debug for PauseCell<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        struct Unpaused;
+
+        impl Debug for Unpaused {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("<unpaused>")
+            }
+        }
+
         let mut d = f.debug_struct("PauseCell");
 
         if_paused(|token| {
             d.field("value", self.borrow(token));
         })
         .unwrap_or_else(|| {
-            d.field("value", &"<unpaused>");
+            d.field("value", &Unpaused);
         });
 
         d.finish()

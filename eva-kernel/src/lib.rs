@@ -9,10 +9,13 @@ pub mod kmain;
 /// Printing stuff.
 pub mod kprint;
 /// Portability interface.
-pub mod portability;
+pub mod port;
 /// Scheduler and threading primitives.
-pub mod scheduler;
+pub mod rt;
+/// Time related utilities.
 pub mod time;
 
 /// Internal utilities.
 mod utils;
+/// Internal panic implementation.
+mod panic;

@@ -1,7 +1,7 @@
 use core::time::Duration;
 
-use crate::portability::{self, Impl};
+use crate::port::{self, Impl};
 
 pub fn get_time() -> Duration {
-    portability::GlobalImpl::get_time()
+    port::GlobalImpl::get_time()
 }
