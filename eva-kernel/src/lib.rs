@@ -15,7 +15,7 @@ pub mod rt;
 /// Time related utilities.
 pub mod time;
 
-/// Internal utilities.
-mod utils;
 /// Internal panic implementation.
 mod panic;
+/// Internal utilities.
+mod utils;

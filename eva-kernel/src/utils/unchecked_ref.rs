@@ -1,6 +1,6 @@
+use core::fmt::{self, Debug, Pointer};
 use core::ops::Deref;
 use core::ptr::NonNull;
-use core::fmt::{self, Debug, Pointer};
 
 /// Erase the lifetime of a reference, allowing it to be moved around more easily.
 /// This only provides immutable access to the erased reference to provide _slightly_ more safety.

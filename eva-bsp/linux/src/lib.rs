@@ -87,7 +87,7 @@ fn init_stage1() {
     {
         // Spawn first thread
         rt::spawn(4096 * 16, 0, init_stage2, 0 as _, 0 as _, 0 as _);
-        
+
         unsafe {
             // Launch the scheduler
             rt::init();

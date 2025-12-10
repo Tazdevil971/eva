@@ -1,8 +1,8 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
-use crate::rt::pause::with_pause;
 use crate::rt;
+use crate::rt::pause::with_pause;
 use crate::rt::wake_list::PriorityWakeList;
 use crate::time::get_time;
 

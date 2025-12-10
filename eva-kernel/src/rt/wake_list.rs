@@ -231,7 +231,6 @@ impl TimedWakeList {
         let mut list = self.list.borrow_ref_mut(token);
 
         while let Some(node) = list.pop_back_if(|ptr| ptr.timeout < instant) {
-            kdbg!(&list);
             rt::resume_paused(token, node.thread).expect("thread in wake list but awake");
         }
     }

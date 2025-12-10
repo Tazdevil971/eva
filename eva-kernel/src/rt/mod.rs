@@ -7,14 +7,13 @@ mod wake_list;
 pub mod pause;
 pub mod sync;
 
-use atomic::{Atomic, Ordering};
-use bytemuck::NoUninit;
-
+use core::cell::Cell;
 use core::cell::RefCell;
+use core::sync::atomic::Ordering;
 use core::time::Duration;
 use core::{mem, ptr};
 
-use pause::{PauseCell, PauseToken, with_pause, yield_now_from_paused};
+use pause::{PauseCell, PauseToken, run_scheduler, with_pause, yield_now_from_paused};
 use sched_queue::SchedQueue;
 use thread::AtomicThreadPtr;
 use wake_list::{TimedWakeList, TimedWakeup};
@@ -35,28 +34,23 @@ pub fn is_valid_prio(prio: i8) -> bool {
     prio >= MIN_PRIORITY && prio <= MAX_PRIORITY
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, NoUninit)]
-#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
-    Shutdown,
+    Idle,
     Running,
-    Paused,
-    PausedPend,
-    Aborted,
+    Abort,
 }
 
 /// Internal scheduler structure
 struct Scheduler {
-    state: Atomic<State>,
-    // This is not possible, see https://github.com/Amanieu/atomic-rs/issues/49
-    // current: Atomic<Option<ThreadPtr>>,
+    state: PauseCell<Cell<State>>,
     current: AtomicThreadPtr,
     sched_queue: PauseCell<RefCell<SchedQueue>>,
     time_wake_list: TimedWakeList,
 }
 
 static SCHEDULER: Scheduler = Scheduler {
-    state: Atomic::new(State::Shutdown),
+    state: PauseCell::new(Cell::new(State::Idle)),
     current: AtomicThreadPtr::new(None),
     sched_queue: PauseCell::new(RefCell::new(SchedQueue::new())),
     time_wake_list: TimedWakeList::new(),
@@ -64,14 +58,6 @@ static SCHEDULER: Scheduler = Scheduler {
 
 /// Signature of a function to be used as the thread entrypoint.
 pub type ThreadFn = unsafe extern "C" fn(*mut (), *mut (), *mut ());
-
-/// An error indicating that the scheduler was already paused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AlreadyPaused;
-
-/// An error indicating that the scheduler was not paused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct NotPaused;
 
 /// An error indicating that a thread join is already in process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,69 +67,11 @@ pub struct AlreadyJoined;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlreadyRunning;
 
-/// Check if the scheduler is paused.
-pub fn is_paused() -> bool {
-    let state = SCHEDULER.state.load(Ordering::SeqCst);
-    matches!(state, State::Paused | State::PausedPend)
-}
-
-/// Try to pause the scheduler.
-pub fn try_pause() -> Result<(), AlreadyPaused> {
-    // TODO(davide.mor): Review memory ordering here
-    let old_state = SCHEDULER.state.load(Ordering::SeqCst);
-    match old_state {
-        State::Running => {
-            SCHEDULER.state.store(State::Paused, Ordering::SeqCst);
-            Ok(())
-        }
-        State::Paused | State::PausedPend => Err(AlreadyPaused),
-        State::Shutdown => {
-            // No-op, there is no scheduler to pause
-            Ok(())
-        },
-        State::Aborted => panic!("scheduler in abort state"),
-    }
-}
-
-/// Try to unpause the scheduler.
-/// # Safety
-/// - No `PauseToken` must exist at this point.
-pub unsafe fn try_unpause() -> Result<(), NotPaused> {
-    // TODO(davide.mor): Review memory ordering here
-    let old_state = SCHEDULER.state.load(Ordering::SeqCst);
-    match old_state {
-        State::Paused => {
-            SCHEDULER.state.store(State::Running, Ordering::SeqCst);
-            Ok(())
-        }
-        State::PausedPend => {
-            SCHEDULER.state.store(State::Running, Ordering::SeqCst);
-            yield_now();
-            Ok(())
-        }
-        State::Running => Err(NotPaused),
-        State::Shutdown => {
-            // No-op, there is no scheduler to unpause
-            Ok(())
-        },
-        State::Aborted => panic!("scheduler in abort state"),
-    }
-}
-
-/// Pend a yield to happen as soon as the pause is ended.
-pub fn pend_yield(_token: PauseToken) {
-    // TODO(davide.mor): Review memory ordering here
-    let old_state = SCHEDULER.state.load(Ordering::SeqCst);
-    if old_state == State::Paused {
-        SCHEDULER.state.store(State::PausedPend, Ordering::SeqCst);
-    }
-
-    // TODO(davide.mor): How should we handle other cases?
-}
-
-/// Immediately abort the scheduler, scheduling after this call will be disabled.
+/// Immediately abort execution, no scheduling will be done past this call
 pub fn abort() {
-    SCHEDULER.state.store(State::Aborted, Ordering::SeqCst);
+    with_pause(|token| {
+        SCHEDULER.state.set(token, State::Abort);
+    })
 }
 
 unsafe fn set_current_paused(_token: PauseToken, thread: ThreadPtr) {
@@ -336,7 +264,6 @@ fn run_scheduler_paused(token: PauseToken) {
     let state = thread.tcb().state.get(token);
     let mut sched = SCHEDULER.sched_queue.borrow_ref_mut(token);
 
-    
     if state == thread::State::Ready {
         sched.push_thread(thread);
     }
@@ -352,34 +279,14 @@ fn run_scheduler_paused(token: PauseToken) {
 
 /// Run the scheduler from inside the appropriate interrupt context. Called from the BSP.
 pub unsafe fn tick() {
-    let state = SCHEDULER.state.load(Ordering::SeqCst);
-    match state {
-        State::Shutdown => {
-            // Scheduler is in shutdown, do nothing
-        }
-        State::Paused => {
-            // We are paused, pend a yield as soon as possible
-            SCHEDULER.state.store(State::PausedPend, Ordering::SeqCst);
-        }
-        State::PausedPend => {
-            // Already pended, do nothing
-        }
-        State::Running => {
-            // Normal operation
-            let token = unsafe {
-                // SAFETY: We are inside the scheduler
-                PauseToken::new()
-            };
-
+    run_scheduler(|token| {
+        if SCHEDULER.state.get(token) == State::Running {
             let now = crate::time::get_time();
 
             run_scheduler_paused(token);
             run_time_driver_paused(token, now);
         }
-        State::Aborted => {
-            // Scheduler is in abort, do nothing
-        }
-    }
+    });
 }
 
 /// Initialize the scheduler, switching it to running mode.
@@ -400,19 +307,18 @@ pub unsafe fn init() {
         ptr::null_mut(),
     );
 
-    let token = unsafe {
-        // SAFETY: The scheduler has not been started yet, so this is safe
-        PauseToken::new()
-    };
+    // Install idle thread
+    with_pause(|token| {
+        SCHEDULER
+            .sched_queue
+            .borrow_ref_mut(token)
+            .push_thread(idle);
 
-    SCHEDULER
-        .sched_queue
-        .borrow_ref_mut(token)
-        .push_thread(idle);
+        unsafe {
+            set_current_paused(token, idle);
+        }
 
-    unsafe {
-        set_current_paused(token, idle);
-    }
-
-    SCHEDULER.state.store(State::Running, Ordering::SeqCst);
+        // We are ready! Set state to running
+        SCHEDULER.state.set(token, State::Running);
+    });
 }
