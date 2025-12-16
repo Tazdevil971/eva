@@ -6,6 +6,7 @@ mod wake_list;
 
 pub mod pause;
 pub mod sync;
+pub mod tls;
 
 use core::cell::Cell;
 use core::cell::RefCell;
@@ -58,7 +59,7 @@ static SCHEDULER: Scheduler = Scheduler {
 };
 
 /// Signature of a function to be used as the thread entrypoint.
-pub type ThreadFn = unsafe extern "C" fn(*mut (), *mut (), *mut ());
+pub type ThreadFn = extern "C" fn(*mut (), *mut (), *mut ());
 
 /// An error indicating that a thread join is already in process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +98,10 @@ pub fn current() -> ThreadPtr {
 fn thread_exit_pad() -> ! {
     let thread = current();
 
+    // First run TLS destructors
+    thread.tcb().local_store.run_dtors();
+
+    // Then wake threads waiting for join and transition to zombie
     with_pause(|token| {
         if let Some(join_wait_thread) = thread.tcb().join_wait_thread.get(token) {
             resume_paused(token, join_wait_thread).expect("thread in wake list but awake");
@@ -123,9 +128,7 @@ pub fn spawn(
     unsafe extern "C" fn launcher(arg1: *mut (), arg2: *mut (), arg3: *mut (), arg4: *mut ()) -> ! {
         let entry = unsafe { mem::transmute::<_, ThreadFn>(arg1) };
 
-        unsafe {
-            (entry)(arg2, arg3, arg4);
-        }
+        (entry)(arg2, arg3, arg4);
 
         thread_exit_pad();
     }

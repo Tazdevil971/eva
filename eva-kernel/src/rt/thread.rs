@@ -9,6 +9,7 @@ use core::{slice, str};
 
 use crate::port::{self, Impl as _};
 use crate::rt::pause::PauseCell;
+use crate::rt::tls::LocalStore;
 use crate::utils::linked_list::{self, Link};
 
 const THREAD_STACK_ALIGN: usize = 8;
@@ -80,6 +81,9 @@ pub struct Tcb {
 
     pub stack_size: usize,
     pub name_size: usize,
+
+    // Thread local store
+    pub local_store: LocalStore,
 
     // Layout stuff
     pub base_ptr: *mut u8,
@@ -200,6 +204,8 @@ impl ThreadPtr {
             join_wait_thread: PauseCell::from(None),
             state: PauseCell::from(State::Ready),
             priority,
+
+            local_store: LocalStore::new(),
 
             stack_size,
             name_size,

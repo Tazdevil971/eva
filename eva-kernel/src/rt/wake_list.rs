@@ -3,13 +3,13 @@ use core::mem;
 use core::ptr::NonNull;
 use core::time::Duration;
 
+use crate::rt;
 use crate::rt::pause::{PauseCell, PauseToken};
 use crate::rt::thread::ThreadPtr;
 use crate::utils::linked_list::{self, Link, LinkedList};
 use crate::utils::scopeguard::defer;
 use crate::utils::unchecked_ref::UncheckedRef;
 use crate::utils::{assert_send, assert_sync};
-use crate::rt;
 
 #[derive(Debug)]
 pub struct PriorityWakeup {

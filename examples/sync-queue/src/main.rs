@@ -1,14 +1,14 @@
 #![no_std]
 #![no_main]
 
-extern crate eva_bsp_linux;
 extern crate alloc;
+extern crate eva_bsp_linux;
 
 use alloc::collections::VecDeque;
-use core::time::Duration;
 use core::ptr;
+use core::time::Duration;
 
-use eva_kernel::rt::sync::{Mutex, Condvar};
+use eva_kernel::rt::sync::{Condvar, Mutex};
 use eva_kernel::{kprintln, rt};
 
 eva_kernel::kmain!(main);
@@ -16,7 +16,7 @@ eva_kernel::kmain!(main);
 struct SingleQueue<T> {
     inner: Mutex<VecDeque<T>>,
     tx: Condvar,
-    rx: Condvar
+    rx: Condvar,
 }
 
 impl<T> SingleQueue<T> {
@@ -26,7 +26,7 @@ impl<T> SingleQueue<T> {
         Self {
             inner: Mutex::new(VecDeque::new()),
             tx: Condvar::new(),
-            rx: Condvar::new()
+            rx: Condvar::new(),
         }
     }
 
@@ -64,7 +64,6 @@ impl<T> SingleQueue<T> {
 static QUEUE: SingleQueue<u32> = SingleQueue::new();
 
 fn main() {
-    
     // Spawn the two threads
     let _thread1 = rt::spawn(
         4096 * 16,

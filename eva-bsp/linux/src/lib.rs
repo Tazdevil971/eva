@@ -95,7 +95,7 @@ fn init_stage1() {
     }
 }
 
-unsafe extern "C" fn init_stage2(_: *mut (), _: *mut (), _: *mut ()) {
+extern "C" fn init_stage2(_: *mut (), _: *mut (), _: *mut ()) {
     // Yay this is the first thread!
 
     // Install timer tick signal

@@ -4,18 +4,30 @@
 extern crate eva_bsp_linux;
 
 use core::ptr;
+use core::ptr::NonNull;
 use core::time::Duration;
 
 use eva_kernel::kprintln;
 use eva_kernel::rt;
 use eva_kernel::rt::sync::Mutex;
+use eva_kernel::rt::tls;
 
 static GLOBAL_VAR: Mutex<u32> = Mutex::new(0);
 
 eva_kernel::kmain!(main);
 
+static mut MY_KEY: tls::Key = tls::Key::new(1).unwrap();
+
+extern "C" fn my_dtor(data: NonNull<()>) {
+    kprintln!("Run dtor for: {:?}", data);
+}
+
 fn main() {
     kprintln!("Hello world!");
+
+    unsafe {
+        MY_KEY = tls::key_create(my_dtor);
+    }
 
     let thread = rt::spawn(
         4096 * 16,
@@ -63,6 +75,8 @@ extern "C" fn other_thread(_user1: *mut (), _user2: *mut (), _user3: *mut ()) {
     let mut lock = GLOBAL_VAR.lock();
     *lock += 1;
     kprintln!("6) Variable: {}", lock);
+
+    tls::set_specific(unsafe { MY_KEY }, NonNull::new(0x69 as _));
 }
 
 extern "C" fn other_other_thread(_user1: *mut (), _user2: *mut (), _user3: *mut ()) {

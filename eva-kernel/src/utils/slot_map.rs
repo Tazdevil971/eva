@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
 use core::fmt::{self, Debug};
 use core::mem::ManuallyDrop;
+use core::num::NonZeroU32;
 
 /// Internal structure used to hold a slot, either a used slot, or the index of the next free slot.
 union Slot<T> {
@@ -15,17 +16,27 @@ pub struct SlotMap<T> {
 }
 
 /// Id used to access elements inside the slot map.
-pub type SlotId = u32;
+pub type SlotId = NonZeroU32;
 
-fn pack_slot_id(idx: usize, generation: u16) -> u32 {
-    (generation as u32) | ((idx as u32) << 16)
+fn pack_slot_id(idx: usize, generation: u16) -> NonZeroU32 {
+    NonZeroU32::new((generation as u32) | ((idx as u32) << 16)).expect("created zero id")
 }
 
-fn unpack_slot_id(slot_id: u32) -> (usize, u16) {
-    ((slot_id >> 16) as usize, (slot_id & 0xffff) as u16)
+fn unpack_slot_id(slot_id: NonZeroU32) -> (usize, u16) {
+    (
+        (slot_id.get() >> 16) as usize,
+        (slot_id.get() & 0xffff) as u16,
+    )
+}
+
+fn is_slot_full(generation: u16) -> bool {
+    (generation & 1) == 1
 }
 
 impl<T> SlotMap<T> {
+    // The first generation is 1, so that we can have NonZeroU32 as id
+    const FIRST_GENERATION: u16 = 1;
+
     /// Create a new, empty slot map.
     pub const fn new() -> Self {
         Self {
@@ -40,13 +51,13 @@ impl<T> SlotMap<T> {
         if next == self.inner.len() {
             self.next += 1;
             self.inner.push((
-                0,
+                Self::FIRST_GENERATION,
                 Slot {
                     used: ManuallyDrop::new(value),
                 },
             ));
 
-            pack_slot_id(next, 0)
+            pack_slot_id(next, Self::FIRST_GENERATION)
         } else {
             let slot = unsafe {
                 // SAFETY: next is always guaranteed to be below or equal the length of the vector, and we just checked if it is equal, so it must be less than length.
@@ -125,10 +136,10 @@ impl<T> SlotMap<T> {
         self.inner
             .iter()
             .enumerate()
-            .filter(|(_, slot)| slot.0 % 2 == 0)
+            .filter(|(_, slot)| is_slot_full(slot.0))
             .map(|(idx, slot)| {
                 (pack_slot_id(idx, slot.0), unsafe {
-                    // SAFETY: We iterate only on slots with even generation, that indicates that a slot is occupied
+                    // SAFETY: We filter for occupied slots
                     &*slot.1.used
                 })
             })
@@ -137,12 +148,12 @@ impl<T> SlotMap<T> {
 
 impl<T> Drop for SlotMap<T> {
     fn drop(&mut self) {
-        let iter = self.inner.iter_mut().filter(|slot| slot.0 % 2 == 0);
+        let iter = self.inner.iter_mut().filter(|slot| is_slot_full(slot.0));
 
         for slot in iter {
             // The slot is occupied, drop the contents
             unsafe {
-                // SAFETY: We iterate only over slots with even generation, that indicates that a slot is occupied
+                // SAFETY: We filter for occupied slots
                 ManuallyDrop::drop(&mut slot.1.used);
             }
         }

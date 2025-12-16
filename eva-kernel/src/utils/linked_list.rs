@@ -236,6 +236,24 @@ where
         })
     }
 
+    /// Obtain an iterator over all of the elements of the list.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut A::Value> {
+        let mut cur = self.head;
+
+        core::iter::from_fn(move || {
+            let link = cur?;
+            cur = unsafe {
+                // SAFETY: link is always a valid pointer
+                LinkedList::<A>::next(link)
+            };
+
+            Some(unsafe {
+                // SAFETY: link is always a valid pointer
+                self.link_to_ref_mut(link)
+            })
+        })
+    }
+
     /// Push a new element to the front of the list.
     pub fn push_front(&mut self, node: A::Ptr) {
         let link = self.link_from_ptr(node);
