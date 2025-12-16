@@ -4,8 +4,9 @@ members = [
     "eva-pac",
     "eva-kernel",
     "eva-bsp/stm32f767",
-    # "eva-bsp/linux",
-    "examples/hello-world"
+    "eva-bsp/linux",
+    "examples/hello-world",
+    "examples/sync-queue",
 ]
 
 [workspace.dependencies]

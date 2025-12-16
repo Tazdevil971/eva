@@ -13,6 +13,7 @@ use core::sync::atomic::Ordering;
 use core::time::Duration;
 use core::{mem, ptr};
 
+use pause::pend_yield;
 use pause::{PauseCell, PauseToken, run_scheduler, with_pause, yield_now_from_paused};
 use sched_queue::SchedQueue;
 use thread::AtomicThreadPtr;
@@ -203,6 +204,14 @@ pub fn resume_paused(token: PauseToken, thread: ThreadPtr) -> Result<(), Already
             .sched_queue
             .borrow_ref_mut(token)
             .push_thread(thread);
+
+        // Check if we woke up a thread with higher priority
+        let current = current();
+        if current.tcb().priority < thread.tcb().priority {
+            // Pend a yield
+            pend_yield(token);
+        }
+
         Ok(())
     } else {
         Err(AlreadyRunning)
@@ -211,10 +220,7 @@ pub fn resume_paused(token: PauseToken, thread: ThreadPtr) -> Result<(), Already
 
 /// Suspend executing of the current thread, after the next yield this thread won't be scheduled anymore. Usable in a paused context.
 pub fn suspend_paused(token: PauseToken) {
-    let thread = SCHEDULER
-        .current
-        .load(Ordering::Relaxed)
-        .expect("no current thread, scheduler is not running!");
+    let thread = current();
 
     let state = thread.tcb().state.get(token);
     if state == thread::State::Ready {
@@ -256,10 +262,7 @@ fn run_time_driver_paused(token: PauseToken, instant: Duration) {
 }
 
 fn run_scheduler_paused(token: PauseToken) {
-    let thread = SCHEDULER
-        .current
-        .load(Ordering::Relaxed)
-        .expect("no current thread, scheduler is not running!");
+    let thread = current();
 
     let state = thread.tcb().state.get(token);
     let mut sched = SCHEDULER.sched_queue.borrow_ref_mut(token);

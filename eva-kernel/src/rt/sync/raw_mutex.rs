@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
 use crate::rt;
-use crate::rt::pause::with_pause;
+use crate::rt::pause::{PauseToken, with_pause};
 use crate::rt::wake_list::PriorityWakeList;
 use crate::time::get_time;
 
@@ -11,6 +11,32 @@ use lock_api::RawMutex as _;
 pub struct RawMutex {
     locked: AtomicBool,
     wait_list: PriorityWakeList,
+}
+
+impl RawMutex {
+    pub fn lock_paused(&self, token: PauseToken) {
+        // This is required because we could have a context switch just before the pause that releases the mutex
+        if self.try_lock() {
+            return;
+        }
+
+        self.wait_list.with_wakeup(token, |_, wakeup| {
+            loop {
+                rt::suspend_and_yield_paused(token);
+
+                if wakeup.is_signaled(token) {
+                    break;
+                }
+            }
+        });
+    }
+
+    pub unsafe fn unlock_paused(&self, token: PauseToken) {
+        let waked = self.wait_list.wakeup_one(token);
+        if !waked {
+            self.locked.store(false, Ordering::SeqCst);
+        }
+    }
 }
 
 unsafe impl lock_api::RawMutex for RawMutex {
@@ -28,20 +54,7 @@ unsafe impl lock_api::RawMutex for RawMutex {
         }
 
         with_pause(|token| {
-            // This is required because we could have a context switch just before the pause that releases the mutex
-            if self.try_lock() {
-                return;
-            }
-
-            self.wait_list.with_wakeup(token, |_, wakeup| {
-                loop {
-                    rt::suspend_and_yield_paused(token);
-
-                    if wakeup.is_signaled(token) {
-                        break;
-                    }
-                }
-            });
+            self.lock_paused(token);
         });
     }
 
@@ -52,11 +65,8 @@ unsafe impl lock_api::RawMutex for RawMutex {
     }
 
     unsafe fn unlock(&self) {
-        with_pause(|token| {
-            let waked = self.wait_list.wakeup_one(token);
-            if !waked {
-                self.locked.store(false, Ordering::SeqCst);
-            }
+        with_pause(|token| unsafe {
+            self.unlock_paused(token);
         });
     }
 

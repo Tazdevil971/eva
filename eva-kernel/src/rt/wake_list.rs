@@ -9,7 +9,7 @@ use crate::utils::linked_list::{self, Link, LinkedList};
 use crate::utils::scopeguard::defer;
 use crate::utils::unchecked_ref::UncheckedRef;
 use crate::utils::{assert_send, assert_sync};
-use crate::{kdbg, rt};
+use crate::rt;
 
 #[derive(Debug)]
 pub struct PriorityWakeup {
