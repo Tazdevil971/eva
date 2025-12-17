@@ -1,5 +1,5 @@
 [package]
-name = "eva-hello-world"
+name = "eva-hello-world-c"
 version = "0.1.0"
 edition = "2024"
 authors = ["Davide Mor <tazdevil971@gmail.com>"]
@@ -9,3 +9,6 @@ authors = ["Davide Mor <tazdevil971@gmail.com>"]
 eva-bsp-linux = { workspace = true }
 eva-kernel = { workspace = true }
 eva-abi = { workspace = true }
+
+[build-dependencies]
+cc = "1.0"

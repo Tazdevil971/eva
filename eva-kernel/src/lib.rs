@@ -15,6 +15,8 @@ pub mod rt;
 /// Time related utilities.
 pub mod time;
 
+/// Internal ABI implementation.
+mod c_abi;
 /// Internal panic implementation.
 mod panic;
 /// Internal utilities.

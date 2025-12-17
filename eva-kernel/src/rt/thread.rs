@@ -1,11 +1,13 @@
 use alloc::alloc::{alloc, dealloc, handle_alloc_error};
 use core::alloc::{Layout, LayoutError};
 use core::cell::Cell;
+use core::ffi::{CStr, c_char};
 use core::fmt::{self, Debug};
 use core::mem;
+use core::ops::Deref;
 use core::ptr::{self, NonNull};
+use core::slice;
 use core::sync::atomic::{AtomicPtr, Ordering};
-use core::{slice, str};
 
 use crate::port::{self, Impl as _};
 use crate::rt::pause::PauseCell;
@@ -77,7 +79,7 @@ pub struct Tcb {
     link: PauseCell<Link>,
     pub state: PauseCell<Cell<State>>,
     pub join_wait_thread: PauseCell<Cell<Option<ThreadPtr>>>,
-    pub priority: i8,
+    pub priority: eva_abi::Priority,
 
     pub stack_size: usize,
     pub name_size: usize,
@@ -94,11 +96,12 @@ pub struct Tcb {
 }
 
 impl Tcb {
-    pub fn name(&self) -> &str {
-        unsafe {
-            let slice = slice::from_raw_parts(self.name_ptr, self.name_size);
-            str::from_utf8_unchecked(slice)
-        }
+    pub fn name_bytes(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(self.name_ptr, self.name_size) }
+    }
+
+    pub fn name(&self) -> &CStr {
+        unsafe { CStr::from_bytes_with_nul_unchecked(self.name_bytes()) }
     }
 }
 
@@ -156,17 +159,27 @@ unsafe impl linked_list::Adapter for ThreadListAdapter {
 }
 
 impl ThreadPtr {
+    pub fn to_abi(self) -> eva_abi::Thread {
+        // TODO: Is this the correct way?
+        unsafe { mem::transmute(self) }
+    }
+
+    pub unsafe fn from_abi(ptr: eva_abi::Thread) -> Self {
+        // TODO: Is this the correct way?
+        unsafe { mem::transmute(ptr) }
+    }
+
     pub fn tcb(&self) -> &Tcb {
         unsafe { self.0.as_ref() }
     }
 
     pub fn read_canary(self) -> [u8; 16] {
         // TODO: Why read volatile here? Is it really true that we must use volatile?
-        unsafe { self.tcb().stack_base_ptr.cast::<[u8; 16]>().read_volatile() }
+        unsafe { self.stack_base_ptr.cast::<[u8; 16]>().read_volatile() }
     }
 
-    pub fn create(stack_size: usize, priority: i8, name: &str) -> Self {
-        let name_bytes = name.as_bytes();
+    pub fn create(stack_size: usize, priority: eva_abi::Priority, name: &CStr) -> Self {
+        let name_bytes = name.to_bytes_with_nul();
         let name_size = name_bytes.len();
 
         // Compute the layout of the thread
@@ -201,8 +214,8 @@ impl ThreadPtr {
         // Initialize thread context
         let tcb = Tcb {
             link: PauseCell::new(Link::unlinked()),
-            join_wait_thread: PauseCell::from(None),
-            state: PauseCell::from(State::Ready),
+            join_wait_thread: PauseCell::cell(None),
+            state: PauseCell::cell(State::Ready),
             priority,
 
             local_store: LocalStore::new(),
@@ -249,13 +262,13 @@ impl ThreadPtr {
         }
     }
 
-    pub fn set_as_global_switchctx(self) {
+    pub unsafe fn set_as_global_switchctx(self) {
         unsafe {
-            port::GlobalImpl::set_global_switchctx(self.tcb().stack_top_ptr);
+            port::GlobalImpl::set_global_switchctx(self.stack_top_ptr);
         }
     }
 
-    pub fn init_switchctx(
+    pub unsafe fn init_switchctx(
         self,
         entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
         arg1: *mut (),
@@ -266,9 +279,9 @@ impl ThreadPtr {
         unsafe {
             // The switch context and the stack both sit at the same address, they just grow in different directions
             port::GlobalImpl::init_switchctx(
-                self.tcb().switchctx_ptr,
-                self.tcb().stack_top_ptr,
-                self.tcb().stack_size,
+                self.switchctx_ptr,
+                self.stack_top_ptr,
+                self.stack_size,
                 entry,
                 arg1,
                 arg2,
@@ -282,6 +295,14 @@ impl ThreadPtr {
 impl Debug for ThreadPtr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         Debug::fmt(self.tcb(), f)
+    }
+}
+
+impl Deref for ThreadPtr {
+    type Target = Tcb;
+
+    fn deref(&self) -> &Tcb {
+        self.tcb()
     }
 }
 

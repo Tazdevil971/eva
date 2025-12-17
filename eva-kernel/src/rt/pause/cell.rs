@@ -42,6 +42,10 @@ impl<T: Default> Default for PauseCell<T> {
 }
 
 impl<T> PauseCell<RefCell<T>> {
+    pub const fn ref_cell(value: T) -> Self {
+        Self::new(RefCell::new(value))
+    }
+
     pub fn replace<'a>(&'a self, token: PauseToken<'a>, t: T) -> T {
         self.borrow(token).replace(t)
     }
@@ -79,6 +83,10 @@ impl<T> From<T> for PauseCell<RefCell<T>> {
 }
 
 impl<T> PauseCell<Cell<T>> {
+    pub const fn cell(value: T) -> Self {
+        Self::new(Cell::new(value))
+    }
+
     pub fn set<'a>(&self, token: PauseToken<'a>, val: T) {
         self.borrow(token).set(val);
     }

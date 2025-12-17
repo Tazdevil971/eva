@@ -86,7 +86,7 @@ fn init_stage1() {
     // Initialize scheduler
     {
         // Spawn first thread
-        rt::spawn(4096 * 16, 0, init_stage2, 0 as _, 0 as _, 0 as _);
+        rt::spawn(4096 * 16, 0, init_stage2, c"Main", 0 as _);
 
         unsafe {
             // Launch the scheduler
@@ -95,7 +95,7 @@ fn init_stage1() {
     }
 }
 
-extern "C" fn init_stage2(_: *mut (), _: *mut (), _: *mut ()) {
+extern "C" fn init_stage2(_: *mut ()) {
     // Yay this is the first thread!
 
     // Install timer tick signal

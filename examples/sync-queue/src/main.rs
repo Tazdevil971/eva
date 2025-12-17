@@ -13,13 +13,13 @@ use eva_kernel::{kprintln, rt};
 
 eva_kernel::kmain!(main);
 
-struct SingleQueue<T> {
+struct SyncQueue<T> {
     inner: Mutex<VecDeque<T>>,
     tx: Condvar,
     rx: Condvar,
 }
 
-impl<T> SingleQueue<T> {
+impl<T> SyncQueue<T> {
     const CAPACITY: usize = 10;
 
     pub const fn new() -> Self {
@@ -61,7 +61,7 @@ impl<T> SingleQueue<T> {
     }
 }
 
-static QUEUE: SingleQueue<u32> = SingleQueue::new();
+static QUEUE: SyncQueue<u32> = SyncQueue::new();
 
 fn main() {
     // Spawn the two threads

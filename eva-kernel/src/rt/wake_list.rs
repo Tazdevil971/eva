@@ -55,7 +55,7 @@ assert_sync!(PriorityWakeList);
 impl PriorityWakeList {
     pub const fn new() -> Self {
         Self {
-            list: PauseCell::new(RefCell::new(LinkedList::new(PriorityWakeupAdapter))),
+            list: PauseCell::ref_cell(LinkedList::new(PriorityWakeupAdapter)),
         }
     }
 
@@ -63,14 +63,14 @@ impl PriorityWakeList {
     where
         F: FnOnce(PauseToken, &PriorityWakeup) -> T,
     {
-        let thread = rt::current();
+        let thread = rt::current_raw();
 
         let node = PriorityWakeup {
             link: PauseCell::new(Link::unlinked()),
             thread,
         };
 
-        let priority = thread.tcb().priority;
+        let priority = thread.priority;
 
         // Insert the node in the appropriate position
         {
@@ -79,7 +79,7 @@ impl PriorityWakeList {
 
             // Search for a tread with higher or equal priority
             while let Some(value) = cursor.current() {
-                let priority2 = value.thread.tcb().priority;
+                let priority2 = value.thread.priority;
                 if priority2 >= priority {
                     break;
                 }
@@ -120,16 +120,15 @@ impl PriorityWakeList {
             return false;
         };
 
-        rt::resume_paused(token, node.thread).expect("thread in wake list but awake");
+        rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");
         true
     }
 
-    #[allow(unused)]
     pub fn wakeup_all(&self, token: PauseToken) {
         let mut list = self.list.borrow_ref_mut(token);
 
         while let Some(node) = list.pop_back() {
-            rt::resume_paused(token, node.thread).expect("thread in wake list but awake");
+            rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");
         }
     }
 }
@@ -176,7 +175,7 @@ pub(super) struct TimedWakeList {
 impl TimedWakeList {
     pub(super) const fn new() -> Self {
         Self {
-            list: PauseCell::new(RefCell::new(LinkedList::new(TimedWakeupAdapter))),
+            list: PauseCell::ref_cell(LinkedList::new(TimedWakeupAdapter)),
         }
     }
 
@@ -186,7 +185,7 @@ impl TimedWakeList {
     {
         let node = TimedWakeup {
             link: PauseCell::new(Link::unlinked()),
-            thread: rt::current(),
+            thread: rt::current_raw(),
             timeout,
         };
 
@@ -231,7 +230,7 @@ impl TimedWakeList {
         let mut list = self.list.borrow_ref_mut(token);
 
         while let Some(node) = list.pop_back_if(|ptr| ptr.timeout < instant) {
-            rt::resume_paused(token, node.thread).expect("thread in wake list but awake");
+            rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");
         }
     }
 }

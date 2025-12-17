@@ -5,13 +5,28 @@ use crate::rt;
 use crate::rt::pause::{PauseToken, with_pause};
 use crate::rt::wake_list::PriorityWakeList;
 use crate::time::get_time;
+use crate::utils::{assert_abi_compatible, assert_send, assert_sync};
 
-use lock_api::RawMutex as _;
+/*
+!!!WARNING!!!
+
+RawMutex is NOT zeroable!
+It contains PriorityWakeList which _should_ be zeroable but it's not!
+The reason for that is that it itself contains a RefCell, which is not zeroable!
+This works right just because RefCell is initialized with zeroes, but this is not portable!
+TODO: In the future switch out to a custom RefCell implementation to avoid this!
+
+!!!WARNING!!!
+*/
 
 pub struct RawMutex {
     locked: AtomicBool,
     wait_list: PriorityWakeList,
 }
+
+assert_send!(RawMutex);
+assert_sync!(RawMutex);
+assert_abi_compatible!(eva_abi::Mutex2 => RawMutex);
 
 impl RawMutex {
     pub fn lock_paused(&self, token: PauseToken) {
@@ -37,17 +52,9 @@ impl RawMutex {
             self.locked.store(false, Ordering::SeqCst);
         }
     }
-}
 
-unsafe impl lock_api::RawMutex for RawMutex {
-    type GuardMarker = lock_api::GuardSend;
-
-    const INIT: Self = Self {
-        locked: AtomicBool::new(false),
-        wait_list: PriorityWakeList::new(),
-    };
-
-    fn lock(&self) {
+    #[unsafe(export_name = "eva_rt_sync_mutex_lock")]
+    pub fn lock(&self) {
         // Fast path
         if self.try_lock() {
             return;
@@ -58,41 +65,33 @@ unsafe impl lock_api::RawMutex for RawMutex {
         });
     }
 
-    fn try_lock(&self) -> bool {
+    #[unsafe(export_name = "eva_rt_sync_mutex_try_lock")]
+    pub fn try_lock(&self) -> bool {
         self.locked
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
     }
 
-    unsafe fn unlock(&self) {
+    #[unsafe(export_name = "eva_rt_sync_mutex_unlock")]
+    pub unsafe fn unlock(&self) {
         with_pause(|token| unsafe {
             self.unlock_paused(token);
         });
     }
 
-    fn is_locked(&self) -> bool {
+    #[unsafe(export_name = "eva_rt_sync_mutex_is_locked")]
+    pub fn is_locked(&self) -> bool {
         self.locked.load(Ordering::SeqCst)
     }
-}
 
-unsafe impl lock_api::RawMutexFair for RawMutex {
-    unsafe fn unlock_fair(&self) {
-        unsafe {
-            lock_api::RawMutex::unlock(self);
-        }
-    }
-}
-
-unsafe impl lock_api::RawMutexTimed for RawMutex {
-    type Duration = Duration;
-    type Instant = Duration;
-
-    fn try_lock_for(&self, timeout: Duration) -> bool {
+    #[unsafe(export_name = "eva_rt_sync_mutex_try_lock_for")]
+    pub fn try_lock_for(&self, timeout: Duration) -> bool {
         let now = get_time();
         self.try_lock_until(now + timeout)
     }
 
-    fn try_lock_until(&self, timeout: Duration) -> bool {
+    #[unsafe(export_name = "eva_rt_sync_mutex_try_lock_until")]
+    pub fn try_lock_until(&self, timeout: Duration) -> bool {
         // Fast path
         if self.try_lock() {
             return true;
@@ -120,5 +119,45 @@ unsafe impl lock_api::RawMutexTimed for RawMutex {
                 })
             })
         })
+    }
+}
+
+unsafe impl lock_api::RawMutex for RawMutex {
+    type GuardMarker = lock_api::GuardSend;
+
+    const INIT: Self = Self {
+        locked: AtomicBool::new(false),
+        wait_list: PriorityWakeList::new(),
+    };
+
+    fn lock(&self) {
+        self.lock()
+    }
+
+    fn try_lock(&self) -> bool {
+        self.try_lock()
+    }
+
+    unsafe fn unlock(&self) {
+        unsafe { self.unlock() }
+    }
+}
+
+unsafe impl lock_api::RawMutexFair for RawMutex {
+    unsafe fn unlock_fair(&self) {
+        unsafe { self.unlock() }
+    }
+}
+
+unsafe impl lock_api::RawMutexTimed for RawMutex {
+    type Duration = Duration;
+    type Instant = Duration;
+
+    fn try_lock_for(&self, timeout: Self::Duration) -> bool {
+        self.try_lock_for(timeout)
+    }
+
+    fn try_lock_until(&self, timeout: Self::Instant) -> bool {
+        self.try_lock_until(timeout)
     }
 }

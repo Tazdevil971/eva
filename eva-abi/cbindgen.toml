@@ -1,0 +1,6 @@
+language = "C"
+pragma_once = true
+includes = ["common.h", "abi_manual.h"]
+
+[layout]
+aligned_n = "ALIGNED"

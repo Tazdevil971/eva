@@ -26,5 +26,15 @@ macro_rules! assert_sync {
     };
 }
 
+macro_rules! assert_abi_compatible {
+    ($abi:ty => $actual:ty) => {
+        const _: () = {
+            assert!(::core::mem::size_of::<$abi>() >= ::core::mem::size_of::<$actual>());
+            assert!(::core::mem::align_of::<$abi>() >= ::core::mem::align_of::<$actual>());
+        };
+    };
+}
+
+pub(crate) use assert_abi_compatible;
 pub(crate) use assert_send;
 pub(crate) use assert_sync;

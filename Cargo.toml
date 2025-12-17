@@ -2,14 +2,17 @@
 resolver = "3"
 members = [
     "eva-pac",
+    "eva-abi",
     "eva-kernel",
     "eva-bsp/stm32f767",
     "eva-bsp/linux",
     "examples/hello-world",
+    "examples/hello-world-c",
     "examples/sync-queue",
 ]
 
 [workspace.dependencies]
+eva-abi = { path = "eva-abi" }
 eva-pac = { path = "eva-pac" }
 eva-kernel = { path = "eva-kernel" }
 eva-bsp-stm32f767 = { path = "eva-bsp/stm32f767" }

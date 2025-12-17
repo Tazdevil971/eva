@@ -1,17 +1,24 @@
-#[doc(hidden)]
-pub mod __private {
-    use crate::port::Impl as _;
-    use core::fmt::Arguments;
+use core::ffi::CStr;
+use core::fmt::Arguments;
 
-    pub fn print(args: Arguments) {
-        crate::port::GlobalImpl::kprint_fmt(args);
+use crate::port::{self, Impl as _};
+
+#[unsafe(export_name = "eva_kprint_fmt")]
+pub fn kprint_fmt(args: Arguments) {
+    port::GlobalImpl::kprint_fmt(args);
+}
+
+pub(crate) fn kputs(str: &CStr) {
+    // TODO(davide.mor): Switch to .display() once it gets stabilized
+    if let Ok(str) = str.to_str() {
+        kprint_fmt(format_args!("{str}"));
     }
 }
 
 #[macro_export]
 macro_rules! kprint {
     ($($arg:tt)*) => {
-        $crate::kprint::__private::print(::core::format_args!($($arg)*));
+        $crate::kprint::kprint_fmt(::core::format_args!($($arg)*));
     };
 }
 

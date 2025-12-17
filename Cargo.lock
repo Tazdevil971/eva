@@ -9,10 +9,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
+name = "cc"
+version = "1.2.50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f50d563227a1c37cc0a263f64eca3334388c01c5e4c4861a9def205c614383c"
+dependencies = [
+ "find-msvc-tools",
+ "shlex",
+]
+
+[[package]]
 name = "critical-section"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
+name = "eva-abi"
+version = "0.1.0"
 
 [[package]]
 name = "eva-bsp-linux"
@@ -36,6 +50,17 @@ dependencies = [
 name = "eva-hello-world"
 version = "0.1.0"
 dependencies = [
+ "eva-abi",
+ "eva-bsp-linux",
+ "eva-kernel",
+]
+
+[[package]]
+name = "eva-hello-world-c"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "eva-abi",
  "eva-bsp-linux",
  "eva-kernel",
 ]
@@ -45,6 +70,7 @@ name = "eva-kernel"
 version = "0.1.0"
 dependencies = [
  "critical-section",
+ "eva-abi",
  "linked_list_allocator",
  "lock_api",
  "rtt-target",
@@ -62,6 +88,12 @@ dependencies = [
  "eva-bsp-linux",
  "eva-kernel",
 ]
+
+[[package]]
+name = "find-msvc-tools"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
 
 [[package]]
 name = "libc"
@@ -107,6 +139,12 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "shlex"
+version = "1.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
 name = "ufmt-write"

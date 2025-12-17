@@ -7,8 +7,7 @@ use core::ptr::{self, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 
-use eva_kernel::scheduler::thread;
-use eva_kernel::{allocator, kdbg, kprint, kprintln, port, scheduler};
+use eva_kernel::{allocator, kdbg, kprint, kprintln, port, rt};
 
 unsafe extern "C" {
     unsafe fn SVCall();
@@ -279,17 +278,17 @@ unsafe extern "C" fn init_stage1() {
     }
 
     {
-        unsafe {
-            // Spawn first thread
-            thread::spawn(4096, 0, init_stage2, 0 as _);
+        // Spawn first thread
+        rt::spawn(4096, 0, init_stage2, 0 as _, 0 as _, 0 as _);
 
+        unsafe {
             // Launch the scheduler
-            scheduler::init(scheduler::CheesyBreadToken);
+            rt::init();
         }
     }
 }
 
-unsafe extern "C" fn init_stage2(_: *mut ()) {
+extern "C" fn init_stage2(_: *mut (), _: *mut (), _: *mut ()) {
     // Yay this is the first thread!
     kprintln!("-> EVA scheduler [online]");
 
@@ -404,9 +403,11 @@ impl port::Impl for PortabilityImpl {
         switchctx_ptr: *mut u8,
         stack_ptr: *mut u8,
         _stack_size: usize,
-        entry: unsafe extern "C" fn(*mut (), *mut ()) -> !,
+        entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
         arg1: *mut (),
         arg2: *mut (),
+        arg3: *mut (),
+        arg4: *mut (),
     ) {
         unsafe {
             let stack_ptr = stack_ptr.sub(size_of::<ArmIrqStack>());
@@ -414,8 +415,8 @@ impl port::Impl for PortabilityImpl {
             stack_ptr.cast::<ArmIrqStack>().write(ArmIrqStack {
                 r0: arg1 as _,
                 r1: arg2 as _,
-                r2: 0,
-                r3: 0,
+                r2: arg3 as _,
+                r3: arg4 as _,
                 r12: 0,
                 lr: 0,
                 pc: entry as _,
@@ -437,6 +438,13 @@ impl port::Impl for PortabilityImpl {
                 r11: 0,
                 handler_lr: 0xffff_fffd,
             });
+        }
+    }
+
+    unsafe fn drop_switchctx(switchctx_ptr: *mut u8) {
+        // Actually a NO-OP, included for correctness
+        unsafe {
+            switchctx_ptr.cast::<SwitchCtx>().drop_in_place();
         }
     }
 
@@ -500,7 +508,7 @@ unsafe extern "C" fn PendSV() {
 
 unsafe extern "C" fn scheduler_tick() {
     unsafe {
-        scheduler::tick();
+        rt::tick();
     }
 }
 

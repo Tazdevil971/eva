@@ -1,5 +1,6 @@
 use linked_list_allocator::Heap;
 
+use alloc::alloc;
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::RefCell;
 use core::ptr::{self, NonNull};
@@ -53,4 +54,60 @@ static mut ALLOCATOR: KAlloc = KAlloc::empty();
 
 pub unsafe fn init(start: *mut u8, end: *mut u8) {
     unsafe { ALLOCATOR = KAlloc::new(start, end) }
+}
+
+#[unsafe(export_name = "eva_mem_alloc")]
+pub unsafe fn alloc(layout: Layout) -> *mut u8 {
+    unsafe { alloc::alloc(layout) }
+}
+
+#[unsafe(export_name = "eva_mem_dealloc")]
+pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
+    unsafe { alloc::dealloc(ptr, layout) }
+}
+
+const MALLOC_ALIGN: usize = 16;
+
+pub(crate) unsafe fn emu_malloc(size: usize) -> *mut () {
+    // Calculate size to accommodate malloc header
+    let size = size + MALLOC_ALIGN;
+
+    // Calculate chunk layout
+    let Ok(layout) = Layout::from_size_align(size, MALLOC_ALIGN) else {
+        return ptr::null_mut();
+    };
+
+    // Allocate the chunk, returning early in case of failed allocation
+    let ptr = unsafe { alloc::alloc(layout).cast::<()>() };
+    if ptr.is_null() {
+        return ptr::null_mut();
+    }
+
+    // Write out the size in the header
+    unsafe {
+        ptr.cast::<usize>().write(size);
+    }
+
+    // Return an actual usable pointer
+    unsafe { ptr.byte_add(MALLOC_ALIGN) }
+}
+
+pub(crate) unsafe fn emu_free(ptr: *mut ()) {
+    // No-op in case of input null pointer
+    if ptr.is_null() {
+        return;
+    }
+
+    // Calculate the pointer to the root and read the size
+    let ptr = unsafe { ptr.byte_sub(MALLOC_ALIGN) };
+    let size = unsafe { ptr.cast::<usize>().read() };
+
+    let layout = unsafe {
+        // SAFETY: If we assume this chunk is valid, the layout must also be valid
+        Layout::from_size_align_unchecked(size, MALLOC_ALIGN)
+    };
+
+    unsafe {
+        alloc::dealloc(ptr.cast(), layout);
+    }
 }

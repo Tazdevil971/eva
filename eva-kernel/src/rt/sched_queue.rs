@@ -19,7 +19,7 @@ impl SchedQueue {
     }
 
     pub fn push_thread(&mut self, thread: ThreadPtr) {
-        let priority = thread.tcb().priority;
+        let priority = thread.priority;
         if priority == super::IDLE_PRIORITY {
             self.idle = Some(thread);
         } else {

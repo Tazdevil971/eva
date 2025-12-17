@@ -90,9 +90,14 @@ impl<T> SlotMap<T> {
             .filter(|slot| slot.0 == generation)
     }
 
+    /// Check if a particular key is contained in the map.
+    pub fn exists(&self, key: SlotId) -> bool {
+        self.get_slot(key).is_some()
+    }
+
     /// Retrieve a particular element.
-    pub fn get(&self, id: SlotId) -> Option<&T> {
-        self.get_slot(id).map(|(_, item)| unsafe {
+    pub fn get(&self, key: SlotId) -> Option<&T> {
+        self.get_slot(key).map(|(_, item)| unsafe {
             // SAFETY: get_slot checks the generation, so this slot is used
             &*item.used
         })

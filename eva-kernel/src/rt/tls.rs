@@ -7,38 +7,51 @@ use crate::rt;
 use crate::rt::pause::PauseCell;
 use crate::rt::sync::Mutex;
 use crate::utils::linked_list::{self, Link, LinkedList};
-use crate::utils::slot_map::SlotMap;
+use crate::utils::slot_map::{SlotId, SlotMap};
 
-pub type Key = crate::utils::slot_map::SlotId;
-pub type Dtor = extern "C" fn(NonNull<()>);
+pub use eva_abi::error::TlsError;
+pub use eva_abi::{TlsDtor, TlsKey};
 
-static KEY_STORE: Mutex<SlotMap<Dtor>> = Mutex::new(SlotMap::new());
+static KEY_STORE: Mutex<SlotMap<TlsDtor>> = Mutex::new(SlotMap::new());
 
-pub fn key_create(dtor: Dtor) -> Key {
-    KEY_STORE.lock().insert(dtor)
+#[unsafe(export_name = "eva_rt_tls_key_create")]
+pub fn key_create(dtor: TlsDtor) -> TlsKey {
+    TlsKey(KEY_STORE.lock().insert(dtor))
 }
 
-pub fn key_delete(key: Key) {
-    KEY_STORE.lock().take(key);
-}
-
-pub fn set_specific(key: Key, data: Option<NonNull<()>>) {
-    let current = rt::current();
-    if let Some(data) = data {
-        current.tcb().local_store.set(key, data);
-    } else {
-        current.tcb().local_store.delete(key);
+#[unsafe(export_name = "eva_rt_tls_key_delete")]
+pub fn key_delete(key: TlsKey) -> Result<(), TlsError> {
+    match KEY_STORE.lock().take(key.0) {
+        Some(_) => Ok(()),
+        None => Err(TlsError::InvalidKey),
     }
 }
 
-pub fn get_specific(key: Key) -> Option<NonNull<()>> {
-    rt::current().tcb().local_store.get(key)
+#[unsafe(export_name = "eva_rt_tls_set_specific")]
+pub fn set_specific(key: TlsKey, data: Option<NonNull<()>>) -> Result<(), TlsError> {
+    if !KEY_STORE.lock().exists(key.0) {
+        return Err(TlsError::InvalidKey);
+    }
+
+    let current = rt::current_raw();
+    if let Some(data) = data {
+        current.local_store.set(key.0, data);
+    } else {
+        current.local_store.delete(key.0);
+    }
+
+    Ok(())
+}
+
+#[unsafe(export_name = "eva_rt_tls_get_specific")]
+pub fn get_specific(key: TlsKey) -> Option<NonNull<()>> {
+    rt::current_raw().local_store.get(key.0)
 }
 
 #[derive(Debug)]
 struct KeyNode {
     link: PauseCell<Link>,
-    key: Key,
+    key: SlotId,
     data: NonNull<()>,
 }
 
@@ -73,7 +86,7 @@ impl LocalStore {
         }
     }
 
-    pub fn get(&self, key: Key) -> Option<NonNull<()>> {
+    pub fn get(&self, key: SlotId) -> Option<NonNull<()>> {
         self.list
             .borrow()
             .iter()
@@ -81,7 +94,7 @@ impl LocalStore {
             .map(|node| node.data)
     }
 
-    pub fn set(&self, key: Key, data: NonNull<()>) {
+    pub fn set(&self, key: SlotId, data: NonNull<()>) {
         let mut list = self.list.borrow_mut();
         let node = list.iter_mut().find(|node| node.key == key);
         if let Some(node) = node {
@@ -95,7 +108,7 @@ impl LocalStore {
         }
     }
 
-    pub fn delete(&self, key: Key) {
+    pub fn delete(&self, key: SlotId) {
         let mut list = self.list.borrow_mut();
         let mut cursor = list.cursor_front_mut();
         while let Some(value) = cursor.current() {
@@ -111,7 +124,7 @@ impl LocalStore {
     pub fn run_dtors(&self) {
         while let Some(node) = self.list.borrow_mut().pop_front() {
             if let Some(dtor) = KEY_STORE.lock().get(node.key) {
-                (dtor)(node.data)
+                (dtor)(node.data.as_ptr())
             }
         }
     }

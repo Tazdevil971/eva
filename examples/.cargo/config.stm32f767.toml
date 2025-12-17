@@ -7,6 +7,13 @@ target = "../thumbv7em-eva-eabihf.json"
 [target.thumbv7em-eva-eabihf]
 runner = "probe-rs run --chip STM32F767ZITx"
 
+[profile.size]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+
 [unstable]
 build-std = ["core", "alloc"]
 build-std-features = ["compiler-builtins-mem"]
