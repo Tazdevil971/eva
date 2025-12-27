@@ -1,4 +1,5 @@
 pub mod condvar;
+pub mod raw_condvar;
 pub mod raw_mutex;
 
 pub use condvar::Condvar;

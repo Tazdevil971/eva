@@ -1,143 +1,62 @@
 use core::time::Duration;
 
-use crate::rt;
-use crate::rt::pause::{PauseToken, with_pause};
+use crate::rt::sync::raw_condvar::RawCondvar;
 use crate::rt::sync::raw_mutex::RawMutex;
-use crate::rt::wake_list::PriorityWakeList;
-use crate::time::get_time;
-use crate::utils::{assert_abi_compatible, assert_send, assert_sync};
 
 use lock_api::MutexGuard;
-use scopeguard::defer;
-
-/*
-!!!WARNING!!!
-
-RawMutex is NOT zeroable!
-It contains PriorityWakeList which _should_ be zeroable but it's not!
-The reason for that is that it itself contains a RefCell, which is not zeroable!
-This works right just because RefCell is initialized with zeroes, but this is not portable!
-TODO: In the future switch out to a custom RefCell implementation to avoid this!
-
-!!!WARNING!!!
-*/
 
 pub struct Condvar {
-    wait_list: PriorityWakeList,
+    inner: RawCondvar,
 }
-
-assert_send!(Condvar);
-assert_sync!(Condvar);
-assert_abi_compatible!(eva_abi::Condvar2 => Condvar);
 
 impl Condvar {
     pub const fn new() -> Self {
         Self {
-            wait_list: PriorityWakeList::new(),
+            inner: RawCondvar::new(),
         }
     }
 
-    unsafe fn wait_internal<F, R>(&self, mutex: &RawMutex, f: F) -> R
-    where
-        F: FnOnce(PauseToken) -> R,
-    {
-        with_pause(|token| {
-            // Unlock the mutex, we are paused so this is atomic
-            unsafe {
-                mutex.unlock_paused(token);
-            }
-
-            defer! {
-                mutex.lock_paused(token);
-            }
-
-            f(token)
-        })
+    pub unsafe fn raw(&self) -> &RawCondvar {
+        &self.inner
     }
 
-    #[unsafe(export_name = "eva_rt_sync_condvar_wait")]
-    pub unsafe fn wait(&self, mutex: &RawMutex) {
+    pub fn wait<'a, T>(&self, guard: MutexGuard<'a, RawMutex, T>) -> MutexGuard<'a, RawMutex, T> {
         unsafe {
-            self.wait_internal(mutex, |token| {
-                // Wait for a wakeup
-                self.wait_list.with_wakeup(token, |_, wakeup| {
-                    loop {
-                        rt::suspend_and_yield_paused(token);
-
-                        if wakeup.is_signaled(token) {
-                            break;
-                        }
-                    }
-                });
-            })
-        }
-    }
-
-    #[unsafe(export_name = "eva_rt_sync_condvar_wait_for")]
-    pub unsafe fn wait_for(&self, mutex: &RawMutex, timeout: Duration) -> bool {
-        unsafe { self.wait_until(mutex, get_time() + timeout) }
-    }
-
-    #[unsafe(export_name = "eva_rt_sync_condvar_wait_until")]
-    pub unsafe fn wait_until(&self, mutex: &RawMutex, timeout: Duration) -> bool {
-        unsafe {
-            self.wait_internal(mutex, |token| {
-                rt::with_timed_wakeup(token, timeout, |token, wakeup| {
-                    self.wait_list.with_wakeup(token, |token, wakeup2| {
-                        loop {
-                            rt::suspend_and_yield_paused(token);
-
-                            if wakeup2.is_signaled(token) {
-                                return true;
-                            }
-
-                            if wakeup.is_expired(token) {
-                                return false;
-                            }
-                        }
-                    })
-                })
-            })
-        }
-    }
-
-    pub fn wait2<'a, T>(&self, guard: MutexGuard<'a, RawMutex, T>) -> MutexGuard<'a, RawMutex, T> {
-        unsafe {
-            self.wait(MutexGuard::mutex(&guard).raw());
+            self.inner.wait(MutexGuard::mutex(&guard).raw());
         }
 
         guard
     }
 
-    pub fn wait_for2<'a, T>(
+    pub fn wait_for<'a, T>(
         &self,
         guard: MutexGuard<'a, RawMutex, T>,
         timeout: Duration,
     ) -> (MutexGuard<'a, RawMutex, T>, bool) {
-        let res = unsafe { self.wait_for(MutexGuard::mutex(&guard).raw(), timeout) };
+        let res = unsafe {
+            self.inner
+                .wait_for(MutexGuard::mutex(&guard).raw(), timeout)
+        };
         (guard, res)
     }
 
-    pub fn wait_until2<'a, T>(
+    pub fn wait_until<'a, T>(
         &self,
         guard: MutexGuard<'a, RawMutex, T>,
         timeout: Duration,
     ) -> (MutexGuard<'a, RawMutex, T>, bool) {
-        let res = unsafe { self.wait_until(MutexGuard::mutex(&guard).raw(), timeout) };
+        let res = unsafe {
+            self.inner
+                .wait_until(MutexGuard::mutex(&guard).raw(), timeout)
+        };
         (guard, res)
     }
 
-    #[unsafe(export_name = "eva_rt_sync_condvar_notify_one")]
     pub fn notify_one(&self) {
-        with_pause(|token| {
-            self.wait_list.wakeup_one(token);
-        })
+        self.inner.notify_one();
     }
 
-    #[unsafe(export_name = "eva_rt_sync_condvar_notify_all")]
     pub fn notify_all(&self) {
-        with_pause(|token| {
-            self.wait_list.wakeup_all(token);
-        })
+        self.inner.notify_all();
     }
 }
