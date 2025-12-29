@@ -7,18 +7,9 @@ use crate::rt::wake_list::PriorityWakeList;
 use crate::time::get_time;
 use crate::utils::{assert_abi_compatible, assert_send, assert_sync};
 
-/*
-!!!WARNING!!!
+use bytemuck::Zeroable;
 
-RawMutex is NOT zeroable!
-It contains PriorityWakeList which _should_ be zeroable but it's not!
-The reason for that is that it itself contains a RefCell, which is not zeroable!
-This works right just because RefCell is initialized with zeroes, but this is not portable!
-TODO: In the future switch out to a custom RefCell implementation to avoid this!
-
-!!!WARNING!!!
-*/
-
+#[derive(Zeroable)]
 pub struct RawMutex {
     locked: AtomicBool,
     wait_list: PriorityWakeList,

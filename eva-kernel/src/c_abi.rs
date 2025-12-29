@@ -2,7 +2,7 @@ use core::alloc::Layout;
 use core::ffi::{CStr, c_char, c_int};
 use core::ptr::{self, NonNull};
 
-use crate::rt::sync::Condvar;
+use crate::rt::sync::raw_condvar::RawCondvar;
 use crate::rt::sync::raw_mutex::RawMutex;
 
 use eva_abi::{
@@ -223,10 +223,10 @@ unsafe fn to_rt_mutex<'a>(mutex: *mut Mutex2) -> &'a RawMutex {
     }
 }
 
-unsafe fn to_rt_condvar<'a>(mutex: *mut Condvar2) -> &'a Condvar {
+unsafe fn to_rt_condvar<'a>(mutex: *mut Condvar2) -> &'a RawCondvar {
     unsafe {
         mutex
-            .cast::<Condvar>()
+            .cast::<RawCondvar>()
             .as_ref()
             .expect("invalid ptr passed to C ABI")
     }

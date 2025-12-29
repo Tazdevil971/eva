@@ -2,6 +2,8 @@ use core::cell::Cell;
 use core::fmt::{self, Debug};
 use core::ptr::NonNull;
 
+use bytemuck::Zeroable;
+
 /// Structure used to embed the required pointers inside the node.
 #[repr(align(2))]
 #[derive(Debug)]
@@ -64,6 +66,7 @@ pub unsafe trait Adapter {
 }
 
 /// Intrusive linked list.
+#[derive(Zeroable)]
 pub struct LinkedList<A> {
     head: Option<NonNull<Link>>,
     tail: Option<NonNull<Link>>,

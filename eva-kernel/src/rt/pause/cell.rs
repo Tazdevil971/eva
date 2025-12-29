@@ -3,7 +3,10 @@ use core::fmt::{self, Debug};
 
 use super::{PauseToken, if_paused};
 
+use bytemuck::Zeroable;
+
 #[repr(transparent)]
+#[derive(Zeroable)]
 pub struct PauseCell<T> {
     inner: UnsafeCell<T>,
 }
@@ -16,7 +19,7 @@ impl<T> PauseCell<T> {
         }
     }
 
-    pub fn get_mut(&mut self) -> &mut T {
+    pub const fn get_mut(&mut self) -> &mut T {
         self.inner.get_mut()
     }
 
@@ -24,7 +27,7 @@ impl<T> PauseCell<T> {
         self.inner.into_inner()
     }
 
-    pub fn borrow<'a>(&'a self, _token: PauseToken<'a>) -> &'a T {
+    pub const fn borrow<'a>(&'a self, _token: PauseToken<'a>) -> &'a T {
         unsafe { &*self.inner.get() }
     }
 }
@@ -78,7 +81,7 @@ impl<T: Default> PauseCell<RefCell<T>> {
 
 impl<T> From<T> for PauseCell<RefCell<T>> {
     fn from(value: T) -> Self {
-        Self::new(RefCell::new(value))
+        Self::ref_cell(value)
     }
 }
 
@@ -118,7 +121,31 @@ impl<T: Default> PauseCell<Cell<T>> {
 
 impl<T> From<T> for PauseCell<Cell<T>> {
     fn from(value: T) -> Self {
-        Self::new(Cell::new(value))
+        Self::cell(value)
+    }
+}
+
+impl<T> PauseCell<UnsafeCell<T>> {
+    pub const fn unsafe_cell(value: T) -> Self {
+        Self::new(UnsafeCell::new(value))
+    }
+
+    pub const fn get<'a>(&self, token: PauseToken<'a>) -> *mut T {
+        self.borrow(token).get()
+    }
+
+    pub const unsafe fn as_ref_unchecked<'a>(&'a self, token: PauseToken<'a>) -> &'a T {
+        unsafe { self.borrow(token).get().as_ref().unwrap() }
+    }
+
+    pub const unsafe fn as_mut_unchecked<'a>(&'a self, token: PauseToken<'a>) -> &'a mut T {
+        unsafe { self.borrow(token).get().as_mut().unwrap() }
+    }
+}
+
+impl<T> From<T> for PauseCell<UnsafeCell<T>> {
+    fn from(value: T) -> Self {
+        Self::unsafe_cell(value)
     }
 }
 

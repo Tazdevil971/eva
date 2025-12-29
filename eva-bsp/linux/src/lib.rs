@@ -5,7 +5,14 @@ use core::ffi::{c_char, c_int};
 use core::time::Duration;
 use core::{fmt, mem, ptr};
 
+// Ice cream machine broke, come back another time :(
+
+// This cannot work as it used to depend on libc, but if we fully commit to target_os = "eva" libc no longer works.
+// linux_raw_sys can be an escape hatch, but it's missing some bindings, and is overall a pain to
+// use, but would COMPLETELY obliterate the dependency on libc, allowing linux userspace applications to use a custom libc.
+
 use eva_kernel::{allocator, kprintln, rt};
+use linux_raw_sys::general::*;
 
 static mut GLOBAL_TIMER: libc::timer_t = ptr::null_mut();
 
@@ -86,7 +93,7 @@ fn init_stage1() {
     // Initialize scheduler
     {
         // Spawn first thread
-        rt::spawn(4096 * 16, 0, init_stage2, c"Main", 0 as _);
+        rt::spawn(4096 * 16, 0, init_stage2, c"Main", ptr::null_mut());
 
         unsafe {
             // Launch the scheduler

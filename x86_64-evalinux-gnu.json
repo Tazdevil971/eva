@@ -12,7 +12,7 @@
     "panic-strategy": "abort",
     "relocation-model": "static",
     "target-pointer-width": 64,
-    "os": "linux",
+    "os": "eva",
     "env": "gnu",
     "target-family": [
         "unix"

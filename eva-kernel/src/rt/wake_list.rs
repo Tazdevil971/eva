@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 use core::mem;
 use core::ptr::NonNull;
 use core::time::Duration;
@@ -10,6 +10,22 @@ use crate::utils::linked_list::{self, Link, LinkedList};
 use crate::utils::scopeguard::defer;
 use crate::utils::unchecked_ref::UncheckedRef;
 use crate::utils::{assert_send, assert_sync};
+
+use bytemuck::Zeroable;
+
+/*
+
+TODO: We use UnsafeCell inside of the wait lists for two main reasons:
+- We need something that can be zeroable, UnsafeCell is transparent so we are good
+- Space is a constraint, since we are going to use it in Mutex and Condvar
+
+This makes this code _more_ unsafe than it should, in the future we might use an ad-hoc structure.
+A GlobalCell for example? A cell that uses a global counter?
+
+Also UncheckedRef is hideous, we can fix it by using a combination of Pin to run panic
+in the destructor, and enforce manual explicit unsafe destruction
+
+*/
 
 #[derive(Debug)]
 pub struct PriorityWakeup {
@@ -26,6 +42,7 @@ impl PriorityWakeup {
     }
 }
 
+#[derive(Zeroable)]
 struct PriorityWakeupAdapter;
 
 unsafe impl linked_list::Adapter for PriorityWakeupAdapter {
@@ -45,8 +62,9 @@ unsafe impl linked_list::Adapter for PriorityWakeupAdapter {
     }
 }
 
+#[derive(Zeroable)]
 pub struct PriorityWakeList {
-    list: PauseCell<RefCell<LinkedList<PriorityWakeupAdapter>>>,
+    list: PauseCell<UnsafeCell<LinkedList<PriorityWakeupAdapter>>>,
 }
 
 assert_send!(PriorityWakeList);
@@ -55,7 +73,7 @@ assert_sync!(PriorityWakeList);
 impl PriorityWakeList {
     pub const fn new() -> Self {
         Self {
-            list: PauseCell::ref_cell(LinkedList::new(PriorityWakeupAdapter)),
+            list: PauseCell::unsafe_cell(LinkedList::new(PriorityWakeupAdapter)),
         }
     }
 
@@ -74,7 +92,10 @@ impl PriorityWakeList {
 
         // Insert the node in the appropriate position
         {
-            let mut list = self.list.borrow_ref_mut(token);
+            let list = unsafe {
+                // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
+                self.list.as_mut_unchecked(token)
+            };
             let mut cursor = list.cursor_front_mut();
 
             // Search for a tread with higher or equal priority
@@ -101,7 +122,10 @@ impl PriorityWakeList {
                 return;
             }
 
-            let mut list = self.list.borrow_ref_mut(token);
+            let list = unsafe {
+                // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
+                self.list.as_mut_unchecked(token)
+            };
             let mut cursor = unsafe {
                 // SAFETY: This node is inside the list and the pointer is valid
                 list.cursor_mut_from_raw(NonNull::from(&node))
@@ -114,7 +138,10 @@ impl PriorityWakeList {
     }
 
     pub fn wakeup_one(&self, token: PauseToken) -> bool {
-        let mut list = self.list.borrow_ref_mut(token);
+        let list = unsafe {
+            // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
+            self.list.as_mut_unchecked(token)
+        };
 
         let Some(node) = list.pop_back() else {
             return false;
@@ -125,7 +152,10 @@ impl PriorityWakeList {
     }
 
     pub fn wakeup_all(&self, token: PauseToken) {
-        let mut list = self.list.borrow_ref_mut(token);
+        let list = unsafe {
+            // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
+            self.list.as_mut_unchecked(token)
+        };
 
         while let Some(node) = list.pop_back() {
             rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");
@@ -149,6 +179,7 @@ impl TimedWakeup {
     }
 }
 
+#[derive(Zeroable)]
 struct TimedWakeupAdapter;
 
 unsafe impl linked_list::Adapter for TimedWakeupAdapter {
@@ -168,14 +199,15 @@ unsafe impl linked_list::Adapter for TimedWakeupAdapter {
     }
 }
 
+#[derive(Zeroable)]
 pub(super) struct TimedWakeList {
-    list: PauseCell<RefCell<LinkedList<TimedWakeupAdapter>>>,
+    list: PauseCell<UnsafeCell<LinkedList<TimedWakeupAdapter>>>,
 }
 
 impl TimedWakeList {
     pub(super) const fn new() -> Self {
         Self {
-            list: PauseCell::ref_cell(LinkedList::new(TimedWakeupAdapter)),
+            list: PauseCell::unsafe_cell(LinkedList::new(TimedWakeupAdapter)),
         }
     }
 
@@ -191,7 +223,10 @@ impl TimedWakeList {
 
         // Insert the node in the appropriate position
         {
-            let mut list = self.list.borrow_ref_mut(token);
+            let list = unsafe {
+                // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
+                self.list.as_mut_unchecked(token)
+            };
             let mut cursor = list.cursor_front_mut();
 
             while let Some(value) = cursor.current() {
@@ -214,7 +249,10 @@ impl TimedWakeList {
                 return;
             }
 
-            let mut list = self.list.borrow_ref_mut(token);
+            let list = unsafe {
+                // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
+                self.list.as_mut_unchecked(token)
+            };
             let mut cursor = unsafe {
                 // SAFETY: This node is inside the list and the pointer is valid
                 list.cursor_mut_from_raw(NonNull::from(&node))
@@ -227,7 +265,10 @@ impl TimedWakeList {
     }
 
     pub(super) fn wakeup_until(&self, token: PauseToken, instant: Duration) {
-        let mut list = self.list.borrow_ref_mut(token);
+        let list = unsafe {
+            // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
+            self.list.as_mut_unchecked(token)
+        };
 
         while let Some(node) = list.pop_back_if(|ptr| ptr.timeout < instant) {
             rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");

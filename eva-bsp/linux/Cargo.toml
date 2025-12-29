@@ -8,4 +8,4 @@ license = "LGPL-3.0-or-later WITH LGPL-3.0-linking-exception"
 [dependencies]
 eva-kernel = { workspace = true }
 
-libc = { version = "0.2", default-features = false }
+linux-raw-sys = { version = "0.12", features = ["general", "no_std"], default-features = false }

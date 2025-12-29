@@ -12,3 +12,4 @@ lock_api = "0.4"
 eva-abi = { workspace = true }
 rtt-target = { workspace = true }
 critical-section = { workspace = true, features = ["restore-state-bool"] }
+bytemuck = { version = "1.24", default-features = false, features = ["derive", "zeroable_atomics"] }

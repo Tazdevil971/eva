@@ -1,13 +1,13 @@
 #![no_std]
 use core::alloc::Layout;
-use core::arch::{asm, global_asm, naked_asm};
+use core::arch::naked_asm;
 use core::fmt;
 use core::mem::size_of;
 use core::ptr::{self, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 
-use eva_kernel::{allocator, kdbg, kprint, kprintln, port, rt};
+use eva_kernel::{allocator, kprintln, port, rt};
 
 unsafe extern "C" {
     unsafe fn SVCall();
@@ -279,7 +279,7 @@ unsafe extern "C" fn init_stage1() {
 
     {
         // Spawn first thread
-        rt::spawn(4096, 0, init_stage2, 0 as _, 0 as _, 0 as _);
+        rt::spawn(4096, 0, init_stage2, c"Main", ptr::null_mut());
 
         unsafe {
             // Launch the scheduler
@@ -288,7 +288,7 @@ unsafe extern "C" fn init_stage1() {
     }
 }
 
-extern "C" fn init_stage2(_: *mut (), _: *mut (), _: *mut ()) {
+extern "C" fn init_stage2(_: *mut ()) {
     // Yay this is the first thread!
     kprintln!("-> EVA scheduler [online]");
 
