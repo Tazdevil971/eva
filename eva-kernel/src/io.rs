@@ -1,11 +1,29 @@
 use core::ffi::CStr;
-use core::fmt::Arguments;
+use core::fmt::{self, Arguments};
 
 use crate::port::{self, Impl as _};
 
-#[unsafe(export_name = "eva_kprint_fmt")]
+#[unsafe(export_name = "eva_io_kwrite")]
+pub fn kwrite(data: &[u8]) -> usize {
+    port::GlobalImpl::kwrite(data)
+}
+
+#[unsafe(export_name = "eva_io_kread")]
+pub fn kread(data: &mut [u8]) -> usize {
+    port::GlobalImpl::kread(data)
+}
+
 pub fn kprint_fmt(args: Arguments) {
-    port::GlobalImpl::kprint_fmt(args);
+    struct KIo;
+
+    impl fmt::Write for KIo {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            kwrite(s.as_bytes());
+            Ok(())
+        }
+    }
+
+    let _ = fmt::Write::write_fmt(&mut KIo, args);
 }
 
 pub(crate) fn kputs(str: &CStr) {
@@ -18,7 +36,7 @@ pub(crate) fn kputs(str: &CStr) {
 #[macro_export]
 macro_rules! kprint {
     ($($arg:tt)*) => {
-        $crate::kprint::kprint_fmt(::core::format_args!($($arg)*));
+        $crate::io::kprint_fmt(::core::format_args!($($arg)*));
     };
 }
 

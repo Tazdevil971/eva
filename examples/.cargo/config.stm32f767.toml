@@ -15,5 +15,5 @@ codegen-units = 1
 strip = true
 
 [unstable]
-build-std = ["core", "alloc"]
+build-std = ["core", "alloc", "std", "panic_abort"]
 build-std-features = ["compiler-builtins-mem"]

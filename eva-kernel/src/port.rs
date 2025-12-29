@@ -1,5 +1,4 @@
 use core::alloc::Layout;
-use core::fmt;
 use core::time::Duration;
 
 /// Trait for implementing various platform specific functionalities.
@@ -29,7 +28,10 @@ pub trait Impl {
     fn yield_now();
 
     /// Print a string to the kernel log output.
-    fn kprint_fmt(args: fmt::Arguments);
+    fn kwrite(data: &[u8]) -> usize;
+
+    /// Read from the kernel input string.
+    fn kread(data: &mut [u8]) -> usize;
 
     /// Retrieve time from start of execution.
     fn get_time() -> Duration;
@@ -86,8 +88,13 @@ macro_rules! set_global_portability_impl {
             }
 
             #[unsafe(no_mangle)]
-            fn __eva_kernel_1_0_kprint_fmt(args: ::core::fmt::Arguments) {
-                <$t as $crate::port::Impl>::kprint_fmt(args)
+            fn __eva_kernel_1_0_kwrite(data: &[u8]) -> usize {
+                <$t as $crate::port::Impl>::kwrite(data)
+            }
+
+            #[unsafe(no_mangle)]
+            fn __eva_kernel_1_0_kread(data: &mut [u8]) -> usize {
+                <$t as $crate::port::Impl>::kread(data)
             }
 
             #[unsafe(no_mangle)]
@@ -170,12 +177,20 @@ impl Impl for GlobalImpl {
         unsafe { __eva_kernel_1_0_yield_now() }
     }
 
-    fn kprint_fmt(args: fmt::Arguments) {
+    fn kwrite(data: &[u8]) -> usize {
         unsafe extern "Rust" {
-            unsafe fn __eva_kernel_1_0_kprint_fmt(args: fmt::Arguments);
+            unsafe fn __eva_kernel_1_0_kwrite(data: &[u8]) -> usize;
         }
 
-        unsafe { __eva_kernel_1_0_kprint_fmt(args) }
+        unsafe { __eva_kernel_1_0_kwrite(data) }
+    }
+
+    fn kread(data: &mut [u8]) -> usize {
+        unsafe extern "Rust" {
+            unsafe fn __eva_kernel_1_0_kread(data: &[u8]) -> usize;
+        }
+
+        unsafe { __eva_kernel_1_0_kread(data) }
     }
 
     fn get_time() -> Duration {

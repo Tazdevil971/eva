@@ -12,10 +12,10 @@ use crate::utils::slot_map::{SlotId, SlotMap};
 pub use eva_abi::error::TlsError;
 pub use eva_abi::{TlsDtor, TlsKey};
 
-static KEY_STORE: Mutex<SlotMap<TlsDtor>> = Mutex::new(SlotMap::new());
+static KEY_STORE: Mutex<SlotMap<Option<TlsDtor>>> = Mutex::new(SlotMap::new());
 
 #[unsafe(export_name = "eva_rt_tls_key_create")]
-pub fn key_create(dtor: TlsDtor) -> TlsKey {
+pub fn key_create(dtor: Option<TlsDtor>) -> TlsKey {
     TlsKey(KEY_STORE.lock().insert(dtor))
 }
 
@@ -124,7 +124,9 @@ impl LocalStore {
     pub fn run_dtors(&self) {
         while let Some(node) = self.list.borrow_mut().pop_front() {
             if let Some(dtor) = KEY_STORE.lock().get(node.key) {
-                (dtor)(node.data.as_ptr())
+                if let Some(dtor) = dtor {
+                    (dtor)(node.data.as_ptr())
+                }
             }
         }
     }

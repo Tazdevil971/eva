@@ -23,7 +23,8 @@ unsafe extern "C" fn eva_c_get_time() -> Duration2 {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_kputs(str: *const c_char) {
-    crate::kprint::kputs(unsafe { CStr::from_ptr(str) });
+    let str = unsafe { CStr::from_ptr(str) };
+    crate::io::kwrite(str.to_bytes());
 }
 
 #[unsafe(no_mangle)]
@@ -184,7 +185,7 @@ unsafe extern "C" fn eva_c_rt_try_unpause() -> bool {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn eva_c_rt_tls_key_create(dtor: TlsDtor) -> TlsKey2 {
+unsafe extern "C" fn eva_c_rt_tls_key_create(dtor: Option<TlsDtor>) -> TlsKey2 {
     crate::rt::tls::key_create(dtor).into()
 }
 

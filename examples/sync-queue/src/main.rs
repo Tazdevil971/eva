@@ -1,16 +1,12 @@
-#![no_std]
-#![no_main]
+#![feature(restricted_std)]
 
-extern crate alloc;
 extern crate eva_bsp_stm32f767;
 
-use alloc::collections::VecDeque;
-use core::ptr;
+use std::collections::VecDeque;
+use std::sync::{Mutex, Condvar};
+use std::ptr;
 
-use eva_kernel::rt::sync::{Condvar, Mutex};
 use eva_kernel::{kprintln, rt};
-
-eva_kernel::kmain!(main);
 
 struct SyncQueue<T> {
     inner: Mutex<VecDeque<T>>,
@@ -30,9 +26,9 @@ impl<T> SyncQueue<T> {
     }
 
     pub fn push(&self, item: T) {
-        let mut lock = self.inner.lock();
+        let mut lock = self.inner.lock().unwrap();
         while lock.len() >= Self::CAPACITY {
-            lock = self.tx.wait(lock);
+            lock = self.tx.wait(lock).unwrap();
         }
 
         // We have space
@@ -42,14 +38,14 @@ impl<T> SyncQueue<T> {
     }
 
     pub fn pop(&self) -> T {
-        let mut lock = self.inner.lock();
+        let mut lock = self.inner.lock().unwrap();
         let item = loop {
             if let Some(item) = lock.pop_back() {
                 break item;
             }
 
             // The queue is empty, wait for a signal
-            lock = self.rx.wait(lock);
+            lock = self.rx.wait(lock).unwrap();
         };
 
         self.tx.notify_one();
@@ -61,6 +57,8 @@ static QUEUE: SyncQueue<u32> = SyncQueue::new();
 
 fn main() {
     // Spawn the two threads
+
+    /*
     let thread1 = rt::spawn(4096 * 16, 0, thread1, c"Thread1", ptr::null_mut()).unwrap();
     let thread2 = rt::spawn(4096 * 16, 0, thread2, c"Thread2", ptr::null_mut()).unwrap();
 
@@ -68,6 +66,29 @@ fn main() {
         rt::join_unchecked(thread1).unwrap();
         rt::join_unchecked(thread2).unwrap();
     }
+    */
+
+    let thread1 = std::thread::spawn(|| {
+        kprintln!("Entering thread1!");
+        for i in 0..100 {
+            QUEUE.push(i);
+            kprintln!("Pushed 1 item!");
+        }
+        kprintln!("Exiting thread1!");
+    });
+
+    let thread2 = std::thread::spawn(|| {
+        kprintln!("Entering thread2!");
+        for i in 0..100 {
+            let item = QUEUE.pop();
+            assert_eq!(i, item);
+            kprintln!("Popped: {}", item);
+        }
+        kprintln!("Exiting thread2!");
+    });
+
+    thread1.join();
+    thread2.join();
 }
 
 extern "C" fn thread1(_user1: *mut ()) {

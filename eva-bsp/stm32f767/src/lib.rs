@@ -225,28 +225,18 @@ mod interrupt {
     critical_section::set_impl!(Cs);
 }
 
-fn kprint_fmt(args: fmt::Arguments) {
-    use core::fmt::Write as _;
-
-    unsafe {
-        // SAFETY: We are not doing any yielding
-        interrupt::free(|| {
-            let mut channel = {
-                // SAFETY: We are running in an interrupt free section!
-                rtt_target::UpChannel::conjure(0).unwrap()
-            };
-
-            let _ = channel.write_fmt(args);
-        })
-    }
-}
-
 unsafe extern "C" fn init_stage1() {
     rtt_target::rtt_init! {
         up: {
             0: {
                 size: 1024,
                 mode: rtt_target::ChannelMode::BlockIfFull,
+                name: "Terminal"
+            }
+        }
+        down: {
+            0: {
+                size: 128,
                 name: "Terminal"
             }
         }
@@ -463,8 +453,33 @@ impl port::Impl for PortabilityImpl {
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Acquire);
     }
 
-    fn kprint_fmt(args: fmt::Arguments) {
-        kprint_fmt(args);
+    fn kwrite(data: &[u8]) -> usize {
+        unsafe {
+            // SAFETY: We are not doing any yielding
+            interrupt::free(|| {
+                let mut channel = {
+                    // SAFETY: We are running in an interrupt free section!
+                    rtt_target::UpChannel::conjure(0).unwrap()
+                };
+
+                channel.write(data)
+            })
+        }
+    }
+
+    fn kread(data: &mut [u8]) -> usize {
+        0
+        // unsafe {
+        //     // SAFETY: We are not doing any yielding
+        //     interrupt::free(|| {
+        //         let mut channel = {
+        //             // SAFETY: We are running in an interrupt free section!
+        //             rtt_target::DownChannel::new(0).unwrap()
+        //         };
+        // 
+        //         channel.read(data)
+        //     })
+        // }
     }
 
     fn get_time() -> Duration {

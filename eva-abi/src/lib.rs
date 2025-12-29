@@ -135,9 +135,23 @@ impl TryFrom<TlsKey2> for TlsKey {
     type Error = error::TlsError;
 
     fn try_from(value: TlsKey2) -> Result<Self, error::TlsError> {
-        NonZeroU32::new(value.0)
+        value.0.try_into()
+    }
+}
+
+impl TryFrom<u32> for TlsKey {
+    type Error = error::TlsError;
+
+    fn try_from(value: u32) -> Result<Self, error::TlsError> {
+        NonZeroU32::new(value)
             .map(TlsKey)
             .ok_or(error::TlsError::InvalidKey)
+    }
+}
+
+impl Into<u32> for TlsKey {
+    fn into(self) -> u32 {
+        self.0.get()
     }
 }
 
@@ -157,7 +171,19 @@ impl From<Option<TlsKey>> for TlsKey2 {
 
 impl From<TlsKey> for TlsKey2 {
     fn from(value: TlsKey) -> Self {
-        Self(value.0.get())
+        value.0.get().into()
+    }
+}
+
+impl From<u32> for TlsKey2 {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl Into<u32> for TlsKey2 {
+    fn into(self) -> u32 {
+        self.0
     }
 }
 
@@ -186,6 +212,9 @@ impl From<Duration2> for Duration {
 #[repr(C, align(8))]
 pub struct Mutex2(UnsafeCell<[u8; 32]>);
 
+unsafe impl Send for Mutex2 {}
+unsafe impl Sync for Mutex2 {}
+
 impl Mutex2 {
     pub const INIT: Self = Self(UnsafeCell::new([0; 32]));
 }
@@ -209,10 +238,14 @@ impl Debug for Condvar2 {
     }
 }
 
+unsafe impl Send for Condvar2 {}
+unsafe impl Sync for Condvar2 {}
+
 unsafe extern "Rust" {
     // General functions
     pub unsafe fn eva_get_time() -> Duration;
-    pub unsafe fn eva_kprint_fmt(args: Arguments);
+    pub unsafe fn eva_io_kwrite(data: &[u8]) -> usize;
+    pub unsafe fn eva_io_kread(data: &mut [u8]) -> usize;
 
     // Allocation functions
     pub unsafe fn eva_mem_alloc(layout: Layout) -> *mut u8;
@@ -268,7 +301,7 @@ unsafe extern "Rust" {
     pub unsafe fn eva_rt_try_unpause() -> bool;
 
     // TLS functions
-    pub unsafe fn eva_rt_tls_key_create(dtor: TlsDtor) -> TlsKey;
+    pub unsafe fn eva_rt_tls_key_create(dtor: Option<TlsDtor>) -> TlsKey;
     pub unsafe fn eva_rt_tls_key_delete(key: TlsKey) -> Result<(), error::TlsError>;
     pub unsafe fn eva_rt_tls_set_specific(
         key: TlsKey,
@@ -303,7 +336,6 @@ unsafe extern "Rust" {
 unsafe extern "C" {
     // General functions
     pub unsafe fn eva_c_get_time() -> Duration2;
-    pub unsafe fn eva_c_kputs(str: *const c_char);
 
     // Allocation functions
     pub unsafe fn eva_c_alloc(size: usize, align: usize) -> *mut ();
@@ -356,7 +388,7 @@ unsafe extern "C" {
     pub unsafe fn eva_c_rt_try_unpause() -> bool;
 
     // TLS functions
-    pub unsafe fn eva_c_rt_tls_key_create(dtor: TlsDtor) -> TlsKey2;
+    pub unsafe fn eva_c_rt_tls_key_create(dtor: Option<TlsDtor>) -> TlsKey2;
     pub unsafe fn eva_c_rt_tls_key_delete(key: TlsKey2) -> c_int;
     pub unsafe fn eva_c_rt_tls_set_specific(key: TlsKey2, data: *mut ()) -> c_int;
     pub unsafe fn eva_c_rt_tls_get_specific(key: TlsKey2) -> *mut ();

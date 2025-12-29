@@ -47,6 +47,9 @@ checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
 [[package]]
 name = "eva-abi"
 version = "0.1.0"
+dependencies = [
+ "rustc-std-workspace-core",
+]
 
 [[package]]
 name = "eva-bsp-linux"
@@ -172,6 +175,12 @@ dependencies = [
  "portable-atomic",
  "ufmt-write",
 ]
+
+[[package]]
+name = "rustc-std-workspace-core"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa9c45b374136f52f2d6311062c7146bff20fec063c3f5d46a410bd937746955"
 
 [[package]]
 name = "scopeguard"
