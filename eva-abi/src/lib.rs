@@ -3,60 +3,36 @@
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::ffi::{CStr, c_char, c_int};
-use core::fmt::{self, Arguments, Debug};
+use core::fmt::{self, Debug};
 use core::marker::PhantomData;
 use core::num::NonZeroU32;
 use core::ptr::{self, NonNull};
 use core::time::Duration;
 
-pub mod error {
-    use super::*;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OsError {
+    NotJoinable,
+    AlreadyRunning,
+    InvalidThread,
+    InvalidTlsKey,
+}
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum JoinError {
-        AlreadyJoining,
-    }
-
-    impl From<JoinError> for c_int {
-        fn from(value: JoinError) -> c_int {
-            match value {
-                JoinError::AlreadyJoining => ALREADY_JOINING_ERROR,
-            }
+impl From<OsError> for c_int {
+    fn from(value: OsError) -> Self {
+        match value {
+            OsError::NotJoinable => NOT_JOINABLE_ERROR,
+            OsError::AlreadyRunning => ALREADY_RUNNING_ERROR,
+            OsError::InvalidThread => INVALID_THREAD_ERROR,
+            OsError::InvalidTlsKey => INVALID_TLS_KEY_ERROR,
         }
     }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum ResumeError {
-        AlreadyRunning,
-    }
-
-    impl From<ResumeError> for c_int {
-        fn from(value: ResumeError) -> c_int {
-            match value {
-                ResumeError::AlreadyRunning => ALREADY_RUNNING_ERROR,
-            }
-        }
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum TlsError {
-        InvalidKey,
-    }
-
-    impl From<TlsError> for c_int {
-        fn from(value: TlsError) -> c_int {
-            match value {
-                TlsError::InvalidKey => TLS_INVALID_KEY_ERROR,
-            }
-        }
-    }
-
-    pub const ALREADY_JOINING_ERROR: c_int = -1;
-    pub const ALREADY_RUNNING_ERROR: c_int = -2;
-    pub const TLS_INVALID_KEY_ERROR: c_int = -3;
 }
 
 pub const OK: c_int = 0;
+pub const NOT_JOINABLE_ERROR: c_int = -1;
+pub const ALREADY_RUNNING_ERROR: c_int = -2;
+pub const INVALID_THREAD_ERROR: c_int = -3;
+pub const INVALID_TLS_KEY_ERROR: c_int = -4;
 
 /// Token representing the paused state of the scheduler, existence of this token proves that the scheduler is paused.
 #[derive(Clone, Copy)]
@@ -89,11 +65,39 @@ pub type Priority = i8;
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreadId(pub NonZeroU32);
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThreadId2(pub u32);
+
+impl From<ThreadId> for ThreadId2 {
+    fn from(value: ThreadId) -> Self {
+        Self(value.0.get())
+    }
+}
+
+impl ThreadId2 {
+    pub const INVALID: Self = Self(0);
+}
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Thread(pub NonNull<()>);
 
 impl Thread {
     pub unsafe fn from_unchecked(other: Thread2) -> Self {
         unsafe { Self(NonNull::new_unchecked(other.0)) }
+    }
+}
+
+impl TryFrom<Thread2> for Thread {
+    type Error = OsError;
+
+    fn try_from(value: Thread2) -> Result<Self, OsError> {
+        NonNull::new(value.0)
+            .map(Thread)
+            .ok_or(OsError::InvalidThread)
     }
 }
 
@@ -132,26 +136,12 @@ pub type TlsDtor = extern "C" fn(*mut ());
 pub struct TlsKey(pub NonZeroU32);
 
 impl TryFrom<TlsKey2> for TlsKey {
-    type Error = error::TlsError;
+    type Error = OsError;
 
-    fn try_from(value: TlsKey2) -> Result<Self, error::TlsError> {
-        value.0.try_into()
-    }
-}
-
-impl TryFrom<u32> for TlsKey {
-    type Error = error::TlsError;
-
-    fn try_from(value: u32) -> Result<Self, error::TlsError> {
-        NonZeroU32::new(value)
+    fn try_from(value: TlsKey2) -> Result<Self, OsError> {
+        NonZeroU32::new(value.0)
             .map(TlsKey)
-            .ok_or(error::TlsError::InvalidKey)
-    }
-}
-
-impl Into<u32> for TlsKey {
-    fn into(self) -> u32 {
-        self.0.get()
+            .ok_or(OsError::InvalidTlsKey)
     }
 }
 
@@ -171,19 +161,7 @@ impl From<Option<TlsKey>> for TlsKey2 {
 
 impl From<TlsKey> for TlsKey2 {
     fn from(value: TlsKey) -> Self {
-        value.0.get().into()
-    }
-}
-
-impl From<u32> for TlsKey2 {
-    fn from(value: u32) -> Self {
-        Self(value)
-    }
-}
-
-impl Into<u32> for TlsKey2 {
-    fn into(self) -> u32 {
-        self.0
+        Self(value.0.get())
     }
 }
 
@@ -259,27 +237,39 @@ unsafe extern "Rust" {
         name: &CStr,
         user: *mut (),
     ) -> Option<Thread>;
-    pub unsafe fn eva_rt_join_unchecked(thread: Thread) -> Result<(), error::JoinError>;
+    pub unsafe fn eva_rt_exists(thread: Thread) -> bool;
+    pub unsafe fn eva_rt_exists_paused(token: PauseToken, thread: Thread) -> bool;
+    pub unsafe fn eva_rt_join(thread: Thread) -> Result<(), OsError>;
+    pub unsafe fn eva_rt_join_unchecked(thread: Thread) -> Result<(), OsError>;
+    pub unsafe fn eva_rt_detach(thread: Thread) -> Result<(), OsError>;
+    pub unsafe fn eva_rt_detach_unchecked(thread: Thread) -> Result<(), OsError>;
 
     // Thread getters
     // TODO(davide.mor): Better API?
     // pub unsafe fn eva_rt_get_name(thread: Thread) -> *const c_char;
-    pub unsafe fn eva_rt_get_priority(thread: Thread) -> Priority;
+    // TODO(davide.mor): Again, API sucks
+    // pub unsafe fn eva_rt_get_priority(thread: Thread) -> Priority;
+    // pub unsafe fn eva_rt_get_tid(thread: Thread) -> ThreadId;
+    // pub unsafe fn eva_rt_get_priority_unchecked(thread: Thread) -> Priority;
+    // pub unsafe fn eva_rt_get_tid_unchecked(thread: Thread) -> ThreadId;
 
     // TODO(davide.mor): Better API?
     // pub unsafe fn eva_rt_get_current_name() -> *const c_char;
     pub unsafe fn eva_rt_get_current_priority() -> Priority;
+    pub unsafe fn eva_rt_get_current_tid() -> ThreadId;
 
     // Thread state management
     pub unsafe fn eva_rt_suspend_paused(token: PauseToken);
     pub unsafe fn eva_rt_suspend_and_yield();
     pub unsafe fn eva_rt_suspend_and_yield_paused(token: PauseToken);
-    pub unsafe fn eva_rt_resume_unchecked(thread: Thread) -> Result<(), error::ResumeError>;
-    pub unsafe fn eva_rt_resume_irq_unchecked(thread: Thread) -> Result<(), error::ResumeError>;
+    pub unsafe fn eva_rt_resume(thread: Thread) -> Result<(), OsError>;
+    pub unsafe fn eva_rt_resume_unchecked(thread: Thread) -> Result<(), OsError>;
+    pub unsafe fn eva_rt_resume_irq_unchecked(thread: Thread) -> Result<(), OsError>;
+    pub unsafe fn eva_rt_resume_paused(token: PauseToken, thread: Thread) -> Result<(), OsError>;
     pub unsafe fn eva_rt_resume_paused_unchecked(
         token: PauseToken,
         thread: Thread,
-    ) -> Result<(), error::ResumeError>;
+    ) -> Result<(), OsError>;
     pub unsafe fn eva_rt_current() -> Thread;
 
     // Time functions
@@ -302,11 +292,8 @@ unsafe extern "Rust" {
 
     // TLS functions
     pub unsafe fn eva_rt_tls_key_create(dtor: Option<TlsDtor>) -> TlsKey;
-    pub unsafe fn eva_rt_tls_key_delete(key: TlsKey) -> Result<(), error::TlsError>;
-    pub unsafe fn eva_rt_tls_set_specific(
-        key: TlsKey,
-        data: *mut (),
-    ) -> Result<(), error::TlsError>;
+    pub unsafe fn eva_rt_tls_key_delete(key: TlsKey) -> Result<(), OsError>;
+    pub unsafe fn eva_rt_tls_set_specific(key: TlsKey, data: *mut ()) -> Result<(), OsError>;
     pub unsafe fn eva_rt_tls_get_specific(key: TlsKey) -> Option<NonNull<()>>;
 
     // Mutex functions
@@ -336,6 +323,8 @@ unsafe extern "Rust" {
 unsafe extern "C" {
     // General functions
     pub unsafe fn eva_c_get_time() -> Duration2;
+    pub unsafe fn eva_c_io_kwrite(data: *const u8, len: usize) -> usize;
+    pub unsafe fn eva_c_io_kread(data: *mut u8, len: usize) -> usize;
 
     // Allocation functions
     pub unsafe fn eva_c_alloc(size: usize, align: usize) -> *mut ();
@@ -351,21 +340,25 @@ unsafe extern "C" {
         name: *const c_char,
         user: *mut (),
     ) -> Thread2;
+    pub unsafe fn eva_c_rt_exists(thread: Thread2) -> bool;
+    pub unsafe fn eva_c_rt_exists_paused(thread: Thread2) -> bool;
+    pub unsafe fn eva_c_rt_join(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_join_unchecked(thread: Thread2) -> c_int;
+    pub unsafe fn eva_c_rt_detach(thread: Thread2) -> c_int;
+    pub unsafe fn eva_c_rt_detach_unchecked(thread: Thread2) -> c_int;
 
     // Thread getters
-    // pub unsafe fn eva_c_rt_get_name(thread: Thread2) -> *const c_char;
-    pub unsafe fn eva_c_rt_get_priority(thread: Thread2) -> Priority;
-
-    // pub unsafe fn eva_c_rt_get_current_name() -> *const c_char;
     pub unsafe fn eva_c_rt_get_current_priority() -> Priority;
+    pub unsafe fn eva_c_rt_get_current_tid() -> ThreadId2;
 
     // Thread state management
     pub unsafe fn eva_c_rt_suspend_paused();
     pub unsafe fn eva_c_rt_suspend_and_yield();
     pub unsafe fn eva_c_rt_suspend_and_yield_paused();
+    pub unsafe fn eva_c_rt_resume(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_resume_unchecked(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_resume_irq_unchecked(thread: Thread2) -> c_int;
+    pub unsafe fn eva_c_rt_resume_paused(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_resume_paused_unchecked(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_current() -> Thread2;
 

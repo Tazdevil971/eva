@@ -4,10 +4,10 @@ extern crate alloc;
 
 /// Kernel allocator.
 pub mod allocator;
-/// Kernel main entry.
-pub mod kmain;
 /// Printing stuff.
 pub mod io;
+/// Kernel main entry.
+pub mod kmain;
 /// Portability interface.
 pub mod port;
 /// Scheduler and threading primitives.

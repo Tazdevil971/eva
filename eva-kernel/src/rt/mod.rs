@@ -1,27 +1,32 @@
 //! Threading and scheduler subsystem.
 
+mod idle;
 mod sched_queue;
 mod thread;
+mod thread_list;
 mod wake_list;
 
 pub mod pause;
 pub mod sync;
+pub mod time;
 pub mod tls;
 
 use core::cell::Cell;
 use core::cell::RefCell;
 use core::ffi::CStr;
-use core::sync::atomic::Ordering;
+use core::num::NonZeroU32;
+use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration;
 use core::{mem, ptr};
 
+use eva_abi::ThreadId;
 use pause::pend_yield;
 use pause::{PauseCell, PauseToken, run_scheduler, with_pause, yield_now_from_paused};
 use sched_queue::SchedQueue;
-use thread::{AtomicThreadPtr, ThreadPtr};
-use wake_list::{TimedWakeList, TimedWakeup};
+use thread::{AtomicThreadPtr, TermAction, ThreadPtr};
+use thread_list::ThreadList;
 
-pub use eva_abi::error::{JoinError, ResumeError};
+use eva_abi::OsError;
 pub use eva_abi::{Priority, Thread, ThreadFn};
 
 use crate::port::{self, Impl as _};
@@ -49,16 +54,29 @@ enum State {
 struct Scheduler {
     state: PauseCell<Cell<State>>,
     sched_queue: PauseCell<RefCell<SchedQueue>>,
+    thread_list: PauseCell<RefCell<ThreadList>>,
+    next_tid: AtomicU32,
     current: AtomicThreadPtr,
-    time_wake_list: TimedWakeList,
 }
 
 static SCHEDULER: Scheduler = Scheduler {
     state: PauseCell::cell(State::Idle),
     sched_queue: PauseCell::ref_cell(SchedQueue::new()),
+    thread_list: PauseCell::ref_cell(ThreadList::new()),
+    next_tid: AtomicU32::new(1),
     current: AtomicThreadPtr::new(None),
-    time_wake_list: TimedWakeList::new(),
 };
+
+fn gen_tid() -> ThreadId {
+    let id = SCHEDULER.next_tid.fetch_add(1, Ordering::Release);
+    ThreadId(NonZeroU32::new(id).unwrap())
+}
+
+fn start() {
+    with_pause(|token| {
+        SCHEDULER.state.set(token, State::Running);
+    })
+}
 
 /// Immediately abort execution, no scheduling will be done past this call
 #[unsafe(export_name = "eva_rt_abort")]
@@ -98,18 +116,40 @@ pub fn current() -> Thread {
 fn thread_exit_pad() -> ! {
     let thread = current_raw();
 
-    // First run TLS destructors
-    thread.local_store.run_dtors();
+    // First thread destructors
+    thread.run_dtors();
 
-    // Then wake threads waiting for join and transition to zombie
     with_pause(|token| {
-        if let Some(join_wait_thread) = thread.join_wait_thread.get(token) {
-            resume_paused_raw(token, join_wait_thread).expect("thread in wake list but awake");
-        }
+        // First transition to terminated
+        thread.state.set(token, thread::State::Terminated);
 
-        thread.state.set(token, thread::State::Zombie);
+        // Second run the termination action
+        match thread.term_action.get(token) {
+            TermAction::None => {
+                // No-op
+            }
+            TermAction::Resume(thread) => {
+                // Someone is waiting for our demise, notify them!
+                resume_paused_raw(token, thread).expect("thread in wake list but awake");
+            }
+            TermAction::Detach => {
+                // We are detached, self-clean
+
+                // First remove from thread list
+                unsafe {
+                    SCHEDULER
+                        .thread_list
+                        .borrow_ref_mut(token)
+                        .remove_thread(thread);
+                }
+
+                // Finally defer its demise to the idle thread
+                idle::defer_thread_destroy_paused(token, thread);
+            }
+        }
     });
 
+    // Thread should no longer be schedulable
     yield_now();
     unreachable!("zombie thread resumed running!")
 }
@@ -125,12 +165,7 @@ pub fn spawn(
 ) -> Option<Thread> {
     assert!(is_valid_prio(priority), "invalid priority");
 
-    unsafe extern "C" fn launcher(
-        arg1: *mut (),
-        arg2: *mut (),
-        _arg3: *mut (),
-        _arg4: *mut (),
-    ) -> ! {
+    extern "C" fn launcher(arg1: *mut (), arg2: *mut (), _arg3: *mut (), _arg4: *mut ()) -> ! {
         let entry = unsafe { mem::transmute::<_, ThreadFn>(arg1) };
 
         (entry)(arg2);
@@ -138,10 +173,17 @@ pub fn spawn(
         thread_exit_pad();
     }
 
-    let thread = ThreadPtr::create(stack_size, priority, name);
-    unsafe {
-        thread.init_switchctx(launcher, entry as _, user, ptr::null_mut(), ptr::null_mut());
-    }
+    let thread = ThreadPtr::create(
+        stack_size,
+        priority,
+        name,
+        gen_tid(),
+        launcher,
+        entry as _,
+        user,
+        ptr::null_mut(),
+        ptr::null_mut(),
+    );
 
     with_pause(|token| {
         // Insert the new thread in the scheduler
@@ -149,60 +191,155 @@ pub fn spawn(
             .sched_queue
             .borrow_ref_mut(token)
             .push_thread(thread);
+
+        // Insert it also in the active thread list
+        SCHEDULER
+            .thread_list
+            .borrow_ref_mut(token)
+            .add_thread(thread);
     });
 
     Some(thread.to_abi())
 }
 
-/// Join a thread, destroying it in the process.
-/// # Safety:
-/// - `thread` must be the only instance pointing to this thread.
-#[unsafe(export_name = "eva_rt_join_unchecked")]
-pub unsafe fn join_unchecked(thread: Thread) -> Result<(), JoinError> {
+#[unsafe(export_name = "eva_rt_exists")]
+pub fn exists(thread: Thread) -> bool {
+    with_pause(|token| exists_paused(token, thread))
+}
+
+#[unsafe(export_name = "eva_rt_exists_paused")]
+pub fn exists_paused(token: PauseToken, thread: Thread) -> bool {
+    SCHEDULER.thread_list.borrow_ref_mut(token).exists(thread.0)
+}
+
+unsafe fn join_inner(token: PauseToken, thread: Thread) -> Result<ThreadPtr, OsError> {
     let thread = unsafe { ThreadPtr::from_abi(thread) };
 
-    let thread = with_pause(|token| {
-        if thread.state.get(token) == thread::State::Zombie {
-            // The thread is already in zombie state
-            return Ok(thread);
-        }
+    // First check if another operation is already in progress
+    if thread.term_action.get(token) != TermAction::None {
+        return Err(OsError::NotJoinable);
+    }
 
-        // Check that no one is already waiting on the thread
-        if thread.join_wait_thread.get(token).is_some() {
-            return Err(JoinError::AlreadyJoining);
-        }
-
+    if thread.state.get(token) != thread::State::Terminated {
+        // Only wait if the thread isn't already terminated
         let current = current_raw();
 
-        // The thread is still alive and kicking!
-        // Register for wait!
-        thread.join_wait_thread.set(token, Some(current));
-
+        // Register our wake as the thread termination action
+        thread.term_action.set(token, TermAction::Resume(current));
         loop {
             // Wait for someone to wake us
             suspend_and_yield_paused(token);
-            // Check if the thread is dead, do this to avoid spurious wakeups
-            if thread.state.get(token) == thread::State::Zombie {
+            // Check if the thread is actually terminated, we need to avoid spurious wakeups
+            if thread.state.get(token) == thread::State::Terminated {
                 break;
             }
         }
+    }
 
-        Ok(thread)
+    // Remove it from the thread list
+    unsafe {
+        // SAFETY: This thread is alive and guaranteed to be valid, it must be in the thread list
+        SCHEDULER
+            .thread_list
+            .borrow_ref_mut(token)
+            .remove_thread(thread);
+    }
+
+    Ok(thread)
+}
+
+#[unsafe(export_name = "eva_rt_join")]
+pub fn join(thread: Thread) -> Result<(), OsError> {
+    let thread = with_pause(|token| {
+        // Check if the thread still exists
+        if !exists_paused(token, thread) {
+            return Err(OsError::InvalidThread);
+        }
+
+        unsafe { join_inner(token, thread) }
     })?;
 
     // Finally destroy the thread
     unsafe {
-        // SAFETY: The caller ensures that this is safe
         thread.destroy();
     }
 
     Ok(())
 }
 
-#[unsafe(export_name = "eva_rt_get_priority")]
-pub unsafe fn get_priority(thread: Thread) -> Priority {
+/// Join a thread, destroying it in the process.
+/// # Safety:
+/// - `thread` must be the only instance pointing to this thread.
+#[unsafe(export_name = "eva_rt_join_unchecked")]
+pub unsafe fn join_unchecked(thread: Thread) -> Result<(), OsError> {
+    let thread = with_pause(|token| unsafe { join_inner(token, thread) })?;
+
+    // Finally destroy the thread
+    unsafe {
+        thread.destroy();
+    }
+
+    Ok(())
+}
+
+unsafe fn detach_inner(token: PauseToken, thread: Thread) -> Result<Option<ThreadPtr>, OsError> {
     let thread = unsafe { ThreadPtr::from_abi(thread) };
-    thread.tcb().priority
+
+    // First check if another operation is already in progress
+    if thread.term_action.get(token) != TermAction::None {
+        return Err(OsError::NotJoinable);
+    }
+
+    if thread.state.get(token) == thread::State::Terminated {
+        // The thread already terminated, clean-up now
+        unsafe {
+            SCHEDULER
+                .thread_list
+                .borrow_ref_mut(token)
+                .remove_thread(thread);
+        }
+
+        Ok(Some(thread))
+    } else {
+        // Set its termination action as detach
+        thread.term_action.set(token, TermAction::Detach);
+        Ok(None)
+    }
+}
+
+#[unsafe(export_name = "eva_rt_detach")]
+pub fn detach(thread: Thread) -> Result<(), OsError> {
+    let thread = with_pause(|token| {
+        // Check if the thread still exists
+        if !exists_paused(token, thread) {
+            return Err(OsError::InvalidThread);
+        }
+
+        unsafe { detach_inner(token, thread) }
+    })?;
+
+    if let Some(thread) = thread {
+        // If the thread needs to be destroyed now, do it
+        unsafe {
+            thread.destroy();
+        }
+    }
+
+    Ok(())
+}
+
+#[unsafe(export_name = "eva_rt_detach_unchecked")]
+pub unsafe fn detach_unchecked(thread: Thread) -> Result<(), OsError> {
+    let thread = with_pause(|token| unsafe { detach_inner(token, thread) })?;
+
+    if let Some(thread) = thread {
+        // If the thread needs to be destroyed now, do it
+        unsafe {
+            thread.destroy();
+        }
+    }
+
+    Ok(())
 }
 
 #[unsafe(export_name = "eva_rt_get_current_priority")]
@@ -210,10 +347,15 @@ pub fn get_current_priority() -> Priority {
     current_raw().tcb().priority
 }
 
-fn resume_paused_raw(token: PauseToken, thread: ThreadPtr) -> Result<(), ResumeError> {
+#[unsafe(export_name = "eva_rt_get_current_tid")]
+pub fn get_current_tid() -> ThreadId {
+    current_raw().tcb().id
+}
+
+fn resume_paused_raw(token: PauseToken, thread: ThreadPtr) -> Result<(), OsError> {
     let state = thread.state.get(token);
     if state != thread::State::Suspend {
-        return Err(ResumeError::AlreadyRunning);
+        return Err(OsError::AlreadyRunning);
     }
 
     thread.state.set(token, thread::State::Ready);
@@ -233,16 +375,22 @@ fn resume_paused_raw(token: PauseToken, thread: ThreadPtr) -> Result<(), ResumeE
 }
 
 #[unsafe(export_name = "eva_rt_resume_irq_unchecked")]
-pub unsafe fn resume_irq_unchecked(_thread: Thread) -> Result<(), ResumeError> {
+pub unsafe fn resume_irq_unchecked(_thread: Thread) -> Result<(), OsError> {
     todo!("IRQ support not yet implemented!")
+}
+
+#[unsafe(export_name = "eva_rt_resume_paused")]
+pub fn resume_paused(token: PauseToken, thread: Thread) -> Result<(), OsError> {
+    if !exists_paused(token, thread) {
+        return Err(OsError::InvalidThread);
+    }
+
+    unsafe { resume_paused_unchecked(token, thread) }
 }
 
 /// Resume a thread from a suspend state. Usable in a paused context.
 #[unsafe(export_name = "eva_rt_resume_paused_unchecked")]
-pub unsafe fn resume_paused_unchecked(
-    token: PauseToken,
-    thread: Thread,
-) -> Result<(), ResumeError> {
+pub unsafe fn resume_paused_unchecked(token: PauseToken, thread: Thread) -> Result<(), OsError> {
     let thread = unsafe { ThreadPtr::from_abi(thread) };
     resume_paused_raw(token, thread)
 }
@@ -258,9 +406,14 @@ pub fn suspend_paused(token: PauseToken) {
     }
 }
 
+#[unsafe(export_name = "eva_rt_resume")]
+pub fn resume(thread: Thread) -> Result<(), OsError> {
+    with_pause(|token| resume_paused(token, thread))
+}
+
 /// Resume a thread from a suspend state.
 #[unsafe(export_name = "eva_rt_resume_unchecked")]
-pub unsafe fn resume_unchecked(thread: Thread) -> Result<(), ResumeError> {
+pub unsafe fn resume_unchecked(thread: Thread) -> Result<(), OsError> {
     with_pause(|token| unsafe { resume_paused_unchecked(token, thread) })
 }
 
@@ -293,39 +446,10 @@ pub fn suspend_and_yield_paused_for(token: PauseToken, time: Duration) -> bool {
 
 #[unsafe(export_name = "eva_rt_suspend_and_yield_paused_until")]
 pub fn suspend_and_yield_paused_until(token: PauseToken, time: Duration) -> bool {
-    with_timed_wakeup(token, time, |_, wakeup| {
+    time::with_timed_wakeup(token, time, |_, wakeup| {
         suspend_and_yield_paused(token);
         !wakeup.is_expired(token)
     })
-}
-
-fn with_timed_wakeup<F, T>(token: PauseToken, timeout: Duration, f: F) -> T
-where
-    F: FnOnce(PauseToken, &TimedWakeup) -> T,
-{
-    SCHEDULER.time_wake_list.with_wakeup(token, timeout, f)
-}
-
-/// Sleep and yield for a given amount of time.
-#[unsafe(export_name = "eva_rt_sleep_for")]
-pub fn sleep_for(duration: Duration) {
-    sleep_until(crate::time::get_time() + duration);
-}
-
-/// Sleep until a specific point in the future.
-#[unsafe(export_name = "eva_rt_sleep_until")]
-pub fn sleep_until(expire: Duration) {
-    with_pause(|token| {
-        with_timed_wakeup(token, expire, |_, wakeup| {
-            while !wakeup.is_expired(token) {
-                suspend_and_yield_paused(token);
-            }
-        })
-    })
-}
-
-fn run_time_driver_paused(token: PauseToken, instant: Duration) {
-    SCHEDULER.time_wake_list.wakeup_until(token, instant);
 }
 
 fn run_scheduler_paused(token: PauseToken) {
@@ -354,7 +478,7 @@ pub unsafe fn tick() {
             let now = crate::time::get_time();
 
             run_scheduler_paused(token);
-            run_time_driver_paused(token, now);
+            time::run_time_driver_paused(token, now);
         }
     });
 }
@@ -368,16 +492,7 @@ pub unsafe fn init() {
         loop {}
     }
 
-    let idle = ThreadPtr::create(IDLE_STACK, IDLE_PRIORITY, c"Idle");
-    unsafe {
-        idle.init_switchctx(
-            idle_launcher,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-            ptr::null_mut(),
-        );
-    }
+    let idle = idle::create();
 
     // Install idle thread
     with_pause(|token| {

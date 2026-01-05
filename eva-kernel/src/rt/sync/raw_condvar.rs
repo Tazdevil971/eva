@@ -72,7 +72,7 @@ impl RawCondvar {
     pub unsafe fn wait_until(&self, mutex: &RawMutex, timeout: Duration) -> bool {
         unsafe {
             self.wait_internal(mutex, |token| {
-                rt::with_timed_wakeup(token, timeout, |token, wakeup| {
+                rt::time::with_timed_wakeup(token, timeout, |token, wakeup| {
                     self.wait_list.with_wakeup(token, |token, wakeup2| {
                         loop {
                             rt::suspend_and_yield_paused(token);

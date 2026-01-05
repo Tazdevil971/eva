@@ -10,9 +10,11 @@ use core::slice;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::port::{self, Impl as _};
-use crate::rt::pause::PauseCell;
+use crate::rt::pause::{PauseCell, PauseToken};
 use crate::rt::tls::LocalStore;
 use crate::utils::linked_list::{self, Link};
+
+use eva_abi::{OsError, Priority, ThreadId};
 
 const THREAD_STACK_ALIGN: usize = 8;
 
@@ -24,7 +26,14 @@ pub const THREAD_CANARY_VALUE: [u8; 16] = [
 pub enum State {
     Ready,
     Suspend,
-    Zombie,
+    Terminated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TermAction {
+    None,
+    Resume(ThreadPtr),
+    Detach,
 }
 
 #[derive(Debug, Clone)]
@@ -76,10 +85,13 @@ impl ThreadLayout {
 }
 
 pub struct Tcb {
-    link: PauseCell<Link>,
+    sched_link: PauseCell<Link>,
+    thread_link: PauseCell<Link>,
+
     pub state: PauseCell<Cell<State>>,
-    pub join_wait_thread: PauseCell<Cell<Option<ThreadPtr>>>,
-    pub priority: eva_abi::Priority,
+    pub term_action: PauseCell<Cell<TermAction>>,
+    pub priority: Priority,
+    pub id: ThreadId,
 
     pub stack_size: usize,
     pub name_size: usize,
@@ -103,6 +115,10 @@ impl Tcb {
     pub fn name(&self) -> &CStr {
         unsafe { CStr::from_bytes_with_nul_unchecked(self.name_bytes()) }
     }
+
+    pub fn run_dtors(&self) {
+        self.local_store.run_dtors();
+    }
 }
 
 impl Debug for Tcb {
@@ -117,10 +133,12 @@ impl Debug for Tcb {
 
         f.debug_struct("Tcb")
             .field("name", &self.name())
-            .field("link", &self.link)
+            .field("sched_link", &self.sched_link)
+            .field("thread_link", &self.thread_link)
             .field("state", &self.state)
             .field("priority", &self.priority)
-            .field("join_wait_thread", &self.join_wait_thread)
+            .field("term_action", &self.term_action)
+            .field("id", &self.id)
             .field("switchctx", &SwitchCtx)
             .field("stack_size", &self.stack_size)
             .field("stack_base_ptr", &self.stack_base_ptr)
@@ -134,10 +152,29 @@ unsafe impl Sync for Tcb {}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct ThreadPtr(NonNull<Tcb>);
+pub struct ThreadPtr(pub(super) NonNull<Tcb>);
 
 unsafe impl Send for ThreadPtr {}
 unsafe impl Sync for ThreadPtr {}
+
+pub struct SchedListAdapter;
+
+unsafe impl linked_list::Adapter for SchedListAdapter {
+    type Ptr = ThreadPtr;
+    type Value = Tcb;
+
+    fn offset_of_link(&self) -> usize {
+        mem::offset_of!(Tcb, sched_link)
+    }
+
+    fn ptr_to_raw(&self, ptr: ThreadPtr) -> NonNull<Tcb> {
+        ptr.0
+    }
+
+    unsafe fn ptr_from_raw(&self, raw: NonNull<Tcb>) -> ThreadPtr {
+        ThreadPtr(raw)
+    }
+}
 
 pub struct ThreadListAdapter;
 
@@ -146,27 +183,25 @@ unsafe impl linked_list::Adapter for ThreadListAdapter {
     type Value = Tcb;
 
     fn offset_of_link(&self) -> usize {
-        mem::offset_of!(Tcb, link)
-    }
-
-    unsafe fn ptr_from_raw(&self, raw: NonNull<Tcb>) -> ThreadPtr {
-        ThreadPtr(raw)
+        mem::offset_of!(Tcb, thread_link)
     }
 
     fn ptr_to_raw(&self, ptr: ThreadPtr) -> NonNull<Tcb> {
         ptr.0
     }
+
+    unsafe fn ptr_from_raw(&self, raw: NonNull<Tcb>) -> ThreadPtr {
+        ThreadPtr(raw)
+    }
 }
 
 impl ThreadPtr {
     pub fn to_abi(self) -> eva_abi::Thread {
-        // TODO: Is this the correct way?
-        unsafe { mem::transmute(self) }
+        eva_abi::Thread(self.0.cast())
     }
 
     pub unsafe fn from_abi(ptr: eva_abi::Thread) -> Self {
-        // TODO: Is this the correct way?
-        unsafe { mem::transmute(ptr) }
+        Self(ptr.0.cast())
     }
 
     pub fn tcb(&self) -> &Tcb {
@@ -178,7 +213,17 @@ impl ThreadPtr {
         unsafe { self.stack_base_ptr.cast::<[u8; 16]>().read_volatile() }
     }
 
-    pub fn create(stack_size: usize, priority: eva_abi::Priority, name: &CStr) -> Self {
+    pub fn create(
+        stack_size: usize,
+        priority: Priority,
+        name: &CStr,
+        id: ThreadId,
+        entry: extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
+        arg1: *mut (),
+        arg2: *mut (),
+        arg3: *mut (),
+        arg4: *mut (),
+    ) -> Self {
         let name_bytes = name.to_bytes_with_nul();
         let name_size = name_bytes.len();
 
@@ -213,10 +258,13 @@ impl ThreadPtr {
 
         // Initialize thread context
         let tcb = Tcb {
-            link: PauseCell::new(Link::unlinked()),
-            join_wait_thread: PauseCell::cell(None),
+            sched_link: PauseCell::new(Link::unlinked()),
+            thread_link: PauseCell::new(Link::unlinked()),
+
             state: PauseCell::cell(State::Ready),
+            term_action: PauseCell::cell(TermAction::None),
             priority,
+            id,
 
             local_store: LocalStore::new(),
 
@@ -229,6 +277,19 @@ impl ThreadPtr {
             switchctx_ptr: switchctx_ptr.as_ptr(),
             name_ptr: name_ptr.as_ptr(),
         };
+
+        unsafe {
+            port::GlobalImpl::init_switchctx(
+                switchctx_ptr.as_ptr(),
+                stack_top_ptr.as_ptr(),
+                stack_size,
+                entry,
+                arg1,
+                arg2,
+                arg3,
+                arg4,
+            );
+        }
 
         // Actually write out TCB
         unsafe {
@@ -264,30 +325,7 @@ impl ThreadPtr {
 
     pub unsafe fn set_as_global_switchctx(self) {
         unsafe {
-            port::GlobalImpl::set_global_switchctx(self.stack_top_ptr);
-        }
-    }
-
-    pub unsafe fn init_switchctx(
-        self,
-        entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
-        arg1: *mut (),
-        arg2: *mut (),
-        arg3: *mut (),
-        arg4: *mut (),
-    ) {
-        unsafe {
-            // The switch context and the stack both sit at the same address, they just grow in different directions
-            port::GlobalImpl::init_switchctx(
-                self.switchctx_ptr,
-                self.stack_top_ptr,
-                self.stack_size,
-                entry,
-                arg1,
-                arg2,
-                arg3,
-                arg4,
-            );
+            port::GlobalImpl::set_global_switchctx(self.switchctx_ptr);
         }
     }
 }

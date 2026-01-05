@@ -1,12 +1,14 @@
 use core::alloc::Layout;
 use core::ffi::{CStr, c_char, c_int};
 use core::ptr::{self, NonNull};
+use core::slice;
 
 use crate::rt::sync::raw_condvar::RawCondvar;
 use crate::rt::sync::raw_mutex::RawMutex;
 
 use eva_abi::{
-    Condvar2, Duration2, Mutex2, PauseToken, Priority, Thread, Thread2, ThreadFn, TlsDtor, TlsKey2,
+    Condvar2, Duration2, Mutex2, PauseToken, Priority, Thread, Thread2, ThreadFn, ThreadId2,
+    TlsDtor, TlsKey2,
 };
 
 fn convert_result<T>(res: Result<(), T>) -> c_int
@@ -22,9 +24,15 @@ unsafe extern "C" fn eva_c_get_time() -> Duration2 {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn eva_c_kputs(str: *const c_char) {
-    let str = unsafe { CStr::from_ptr(str) };
-    crate::io::kwrite(str.to_bytes());
+unsafe extern "C" fn eva_c_io_kwrite(data: *const u8, len: usize) -> usize {
+    let slice = unsafe { slice::from_raw_parts(data, len) };
+    crate::io::kwrite(slice)
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_io_kread(data: *mut u8, len: usize) -> usize {
+    let slice = unsafe { slice::from_raw_parts_mut(data, len) };
+    crate::io::kread(slice)
 }
 
 #[unsafe(no_mangle)]
@@ -64,20 +72,62 @@ unsafe extern "C" fn eva_c_rt_spawn(
 }
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_exists(thread: Thread2) -> bool {
+    let Ok(thread) = thread.try_into() else {
+        return false;
+    };
+
+    crate::rt::exists(thread)
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_exists_paused(thread: Thread2) -> bool {
+    let token = unsafe { PauseToken::new() };
+    let Ok(thread) = thread.try_into() else {
+        return false;
+    };
+
+    crate::rt::exists_paused(token, thread)
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_join(thread: Thread2) -> c_int {
+    let Ok(thread) = thread.try_into() else {
+        return eva_abi::INVALID_THREAD_ERROR;
+    };
+
+    convert_result(crate::rt::join(thread))
+}
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_rt_join_unchecked(thread: Thread2) -> c_int {
     let thread = unsafe { Thread::from_unchecked(thread) };
     convert_result(unsafe { crate::rt::join_unchecked(thread) })
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn eva_c_rt_get_priority(thread: Thread2) -> Priority {
+unsafe extern "C" fn eva_c_rt_detach(thread: Thread2) -> c_int {
+    let Ok(thread) = thread.try_into() else {
+        return eva_abi::INVALID_THREAD_ERROR;
+    };
+
+    convert_result(crate::rt::detach(thread))
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_detach_unchecked(thread: Thread2) -> c_int {
     let thread = unsafe { Thread::from_unchecked(thread) };
-    unsafe { crate::rt::get_priority(thread) }
+    convert_result(unsafe { crate::rt::detach_unchecked(thread) })
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_rt_get_current_priority() -> Priority {
     crate::rt::get_current_priority()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_get_current_tid() -> ThreadId2 {
+    crate::rt::get_current_tid().into()
 }
 
 #[unsafe(no_mangle)]
@@ -98,6 +148,15 @@ unsafe extern "C" fn eva_c_rt_suspend_and_yield_paused() {
 }
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_resume(thread: Thread2) -> c_int {
+    let Ok(thread) = thread.try_into() else {
+        return eva_abi::INVALID_THREAD_ERROR;
+    };
+
+    convert_result(crate::rt::resume(thread))
+}
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_rt_resume_unchecked(thread: Thread2) -> c_int {
     let thread = unsafe { Thread::from_unchecked(thread) };
     convert_result(unsafe { crate::rt::resume_unchecked(thread) })
@@ -107,6 +166,16 @@ unsafe extern "C" fn eva_c_rt_resume_unchecked(thread: Thread2) -> c_int {
 unsafe extern "C" fn eva_c_rt_resume_irq_unchecked(thread: Thread2) -> c_int {
     let thread = unsafe { Thread::from_unchecked(thread) };
     convert_result(unsafe { crate::rt::resume_irq_unchecked(thread) })
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_resume_paused(thread: Thread2) -> c_int {
+    let token = unsafe { PauseToken::new() };
+    let Ok(thread) = thread.try_into() else {
+        return eva_abi::INVALID_THREAD_ERROR;
+    };
+
+    convert_result(crate::rt::resume_paused(token, thread))
 }
 
 #[unsafe(no_mangle)]
@@ -123,12 +192,12 @@ unsafe extern "C" fn eva_c_rt_current() -> Thread2 {
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_rt_sleep_for(time: Duration2) {
-    crate::rt::sleep_for(time.into());
+    crate::rt::time::sleep_for(time.into());
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_rt_sleep_until(time: Duration2) {
-    crate::rt::sleep_until(time.into());
+    crate::rt::time::sleep_until(time.into());
 }
 
 #[unsafe(no_mangle)]
@@ -192,7 +261,7 @@ unsafe extern "C" fn eva_c_rt_tls_key_create(dtor: Option<TlsDtor>) -> TlsKey2 {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_rt_tls_key_delete(key: TlsKey2) -> c_int {
     let Ok(key) = key.try_into() else {
-        return eva_abi::error::TLS_INVALID_KEY_ERROR;
+        return eva_abi::INVALID_TLS_KEY_ERROR;
     };
     convert_result(crate::rt::tls::key_delete(key))
 }
@@ -200,7 +269,7 @@ unsafe extern "C" fn eva_c_rt_tls_key_delete(key: TlsKey2) -> c_int {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_rt_tls_set_specific(key: TlsKey2, data: *mut ()) -> c_int {
     let Ok(key) = key.try_into() else {
-        return eva_abi::error::TLS_INVALID_KEY_ERROR;
+        return eva_abi::INVALID_TLS_KEY_ERROR;
     };
     convert_result(crate::rt::tls::set_specific(key, NonNull::new(data)))
 }

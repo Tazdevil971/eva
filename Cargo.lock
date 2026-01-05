@@ -114,6 +114,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "eva-sync-queue-std"
+version = "0.1.0"
+dependencies = [
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -128,8 +136,7 @@ checksum = "9afa463f5405ee81cdb9cc2baf37e08ec7e4c8209442b5d72c04cfb2cd6e6286"
 [[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+source = "git+https://github.com/Tazdevil971/linux-raw-sys.git#5183bec45e90410f76258680acc7708c95f70c09"
 
 [[package]]
 name = "lock_api"

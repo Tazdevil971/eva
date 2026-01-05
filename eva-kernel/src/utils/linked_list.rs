@@ -139,6 +139,10 @@ impl<A> LinkedList<A> {
         unsafe { link.as_ref().set_unlinked() }
     }
 
+    unsafe fn is_linked(link: NonNull<Link>) -> bool {
+        unsafe { link.as_ref().is_linked() }
+    }
+
     unsafe fn next(link: NonNull<Link>) -> Option<NonNull<Link>> {
         unsafe { link.as_ref().next.get() }
     }
@@ -169,19 +173,28 @@ where
         }
     }
 
-    unsafe fn link_to_ptr(&self, link: NonNull<Link>) -> A::Ptr {
+    unsafe fn post_unlink(&self, link: NonNull<Link>) -> A::Ptr {
         unsafe {
             // SAFETY: Caller assures that link is a valid pointer
+            LinkedList::<A>::unlink(link);
             self.adapter.ptr_from_raw(self.link_to_raw(link))
         }
     }
 
-    fn link_from_ptr(&self, ptr: A::Ptr) -> NonNull<Link> {
+    fn pre_link(&self, ptr: A::Ptr) -> NonNull<Link> {
         let raw = self.adapter.ptr_to_raw(ptr);
-        unsafe {
+        let link = unsafe {
             // SAFETY: ptr_to_raw must return a valid pointer
             self.link_from_raw(raw)
-        }
+        };
+
+        // Check that the node was not linked to anything
+        assert!(
+            unsafe { !LinkedList::<A>::is_linked(link) },
+            "Attempted to link an already linked node!"
+        );
+
+        link
     }
 
     unsafe fn link_to_ref<'a>(&self, link: NonNull<Link>) -> &'a A::Value {
@@ -259,10 +272,10 @@ where
 
     /// Push a new element to the front of the list.
     pub fn push_front(&mut self, node: A::Ptr) {
-        let link = self.link_from_ptr(node);
+        let link = self.pre_link(node);
 
         unsafe {
-            // SAFETY: link_from_ptr always returns a valid pointer
+            // SAFETY: pre_link always returns a valid pointer
             // SAFETY: head is always a valid pointer
             self.link3(None, link, self.head);
         }
@@ -270,10 +283,10 @@ where
 
     /// Push a new element to the back of the list.
     pub fn push_back(&mut self, node: A::Ptr) {
-        let link = self.link_from_ptr(node);
+        let link = self.pre_link(node);
 
         unsafe {
-            // SAFETY: link_from_ptr always returns a valid pointer
+            // SAFETY: pre_link always returns a valid pointer
             // SAFETY: tail is always a valid pointer
             self.link3(self.tail, link, None);
         }
@@ -290,14 +303,12 @@ where
             unsafe {
                 // SAFETY: next is always a valid pointer
                 self.link2(None, next);
-                // SAFETY: head belongs to the queue
-                LinkedList::<A>::unlink(head);
             }
 
             Some(unsafe {
                 // SAFETY: head is always valid
                 // SAFETY: head no longer belongs to the queue
-                self.link_to_ptr(head)
+                self.post_unlink(head)
             })
         } else {
             None
@@ -309,20 +320,18 @@ where
         if let Some(tail) = self.tail {
             let prev = unsafe {
                 // SAFETY: tail is always a valid pointer
-                Self::next(tail)
+                Self::prev(tail)
             };
 
             unsafe {
                 // SAFETY: prev is always a valid pointer
                 self.link2(prev, None);
-                // SAFETY: tail belongs to the queue
-                LinkedList::<A>::unlink(tail);
             }
 
             Some(unsafe {
                 // SAFETY: tail is always valid
                 // SAFETY: tail no longer belongs to the queue
-                self.link_to_ptr(tail)
+                self.post_unlink(tail)
             })
         } else {
             None
@@ -353,14 +362,12 @@ where
             unsafe {
                 // SAFETY: next is always a valid pointer
                 self.link2(None, next);
-                // SAFETY: head belongs to the queue
-                LinkedList::<A>::unlink(head);
             }
 
             Some(unsafe {
                 // SAFETY: head is always valid
                 // SAFETY: head no longer belongs to the queue
-                self.link_to_ptr(head)
+                self.post_unlink(head)
             })
         } else {
             None
@@ -391,14 +398,12 @@ where
             unsafe {
                 // SAFETY: prev is always a valid pointer
                 self.link2(prev, None);
-                // SAFETY: tail belongs to the queue
-                LinkedList::<A>::unlink(tail);
             }
 
             Some(unsafe {
                 // SAFETY: tail is always valid
                 // SAFETY: tail no longer belongs to the queue
-                self.link_to_ptr(tail)
+                self.post_unlink(tail)
             })
         } else {
             None
@@ -514,7 +519,7 @@ where
             self.list.head
         };
 
-        let link = self.list.link_from_ptr(ptr);
+        let link = self.list.pre_link(ptr);
 
         unsafe {
             // SAFETY: cur is always a valid pointer
@@ -534,7 +539,7 @@ where
             self.list.tail
         };
 
-        let link = self.list.link_from_ptr(ptr);
+        let link = self.list.pre_link(ptr);
 
         unsafe {
             // SAFETY: cur is always a valid pointer
@@ -555,8 +560,6 @@ where
                 // SAFETY: prev is always a valid pointer
                 // SAFETY: next is always a valid pointer
                 self.list.link2(prev, next);
-                // SAFETY: cur belongs to the linked list
-                LinkedList::<A>::unlink(cur);
             }
 
             self.cur = next;
@@ -564,7 +567,7 @@ where
             Some(unsafe {
                 // SAFETY: cur is always valid
                 // SAFETY: cur no longer belongs to the queue
-                self.list.link_to_ptr(cur)
+                self.list.post_unlink(cur)
             })
         } else {
             None

@@ -476,7 +476,7 @@ impl port::Impl for PortabilityImpl {
         //             // SAFETY: We are running in an interrupt free section!
         //             rtt_target::DownChannel::new(0).unwrap()
         //         };
-        // 
+        //
         //         channel.read(data)
         //     })
         // }

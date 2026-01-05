@@ -94,7 +94,7 @@ impl RawMutex {
                 return true;
             }
 
-            rt::with_timed_wakeup(token, timeout, |token, wakeup| {
+            rt::time::with_timed_wakeup(token, timeout, |token, wakeup| {
                 self.wait_list.with_wakeup(token, |token, wakeup2| {
                     loop {
                         rt::suspend_and_yield_paused(token);
