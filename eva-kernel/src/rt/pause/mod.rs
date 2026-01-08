@@ -1,7 +1,8 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::rt;
-use crate::utils::scopeguard::defer;
+
+use scopeguard::defer;
 
 mod cell;
 

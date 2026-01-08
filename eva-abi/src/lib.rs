@@ -264,7 +264,7 @@ unsafe extern "Rust" {
     pub unsafe fn eva_rt_suspend_and_yield_paused(token: PauseToken);
     pub unsafe fn eva_rt_resume(thread: Thread) -> Result<(), OsError>;
     pub unsafe fn eva_rt_resume_unchecked(thread: Thread) -> Result<(), OsError>;
-    pub unsafe fn eva_rt_resume_irq_unchecked(thread: Thread) -> Result<(), OsError>;
+    pub unsafe fn eva_rt_resume_irq_unchecked(thread: Thread);
     pub unsafe fn eva_rt_resume_paused(token: PauseToken, thread: Thread) -> Result<(), OsError>;
     pub unsafe fn eva_rt_resume_paused_unchecked(
         token: PauseToken,
@@ -357,7 +357,7 @@ unsafe extern "C" {
     pub unsafe fn eva_c_rt_suspend_and_yield_paused();
     pub unsafe fn eva_c_rt_resume(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_resume_unchecked(thread: Thread2) -> c_int;
-    pub unsafe fn eva_c_rt_resume_irq_unchecked(thread: Thread2) -> c_int;
+    pub unsafe fn eva_c_rt_resume_irq_unchecked(thread: Thread2);
     pub unsafe fn eva_c_rt_resume_paused(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_resume_paused_unchecked(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_current() -> Thread2;

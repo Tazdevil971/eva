@@ -4,6 +4,7 @@ members = [
     "eva-pac",
     "eva-abi",
     "eva-kernel",
+    "eva-utils",
     "eva-bsp/stm32f767",
     "eva-bsp/linux",
     "examples/hello-world",
@@ -16,6 +17,7 @@ members = [
 eva-abi = { path = "eva-abi" }
 eva-pac = { path = "eva-pac" }
 eva-kernel = { path = "eva-kernel" }
+eva-utils = { path = "eva-utils" }
 eva-bsp-stm32f767 = { path = "eva-bsp/stm32f767" }
 eva-bsp-linux = { path = "eva-bsp/linux" }
 

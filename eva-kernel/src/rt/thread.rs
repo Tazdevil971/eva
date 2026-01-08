@@ -1,20 +1,19 @@
 use alloc::alloc::{alloc, dealloc, handle_alloc_error};
 use core::alloc::{Layout, LayoutError};
 use core::cell::Cell;
-use core::ffi::{CStr, c_char};
+use core::ffi::CStr;
 use core::fmt::{self, Debug};
-use core::mem;
 use core::ops::Deref;
 use core::ptr::{self, NonNull};
 use core::slice;
 use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::port::{self, Impl as _};
-use crate::rt::pause::{PauseCell, PauseToken};
+use crate::rt::pause::PauseCell;
 use crate::rt::tls::LocalStore;
-use crate::utils::linked_list::{self, Link};
 
-use eva_abi::{OsError, Priority, ThreadId};
+use eva_abi::{Priority, ThreadId};
+use eva_utils::{linked_list, singly_linked_list};
 
 const THREAD_STACK_ALIGN: usize = 8;
 
@@ -85,8 +84,16 @@ impl ThreadLayout {
 }
 
 pub struct Tcb {
-    sched_link: PauseCell<Link>,
-    thread_link: PauseCell<Link>,
+    // Link used for scheduling operations:
+    // - scheduling queues
+    sched_link: PauseCell<linked_list::Link<Self>>,
+    // Link used for the thread list:
+    // - active thread list
+    // - idle deletion defer operation
+    thread_link: PauseCell<linked_list::Link<Self>>,
+    // Link used for atomic defer operations:
+    // - defer resume
+    defer_link: PauseCell<singly_linked_list::Link<Self>>,
 
     pub state: PauseCell<Cell<State>>,
     pub term_action: PauseCell<Cell<TermAction>>,
@@ -135,6 +142,7 @@ impl Debug for Tcb {
             .field("name", &self.name())
             .field("sched_link", &self.sched_link)
             .field("thread_link", &self.thread_link)
+            .field("defer_link", &self.defer_link)
             .field("state", &self.state)
             .field("priority", &self.priority)
             .field("term_action", &self.term_action)
@@ -157,14 +165,21 @@ pub struct ThreadPtr(pub(super) NonNull<Tcb>);
 unsafe impl Send for ThreadPtr {}
 unsafe impl Sync for ThreadPtr {}
 
+#[derive(Clone, Copy)]
 pub struct SchedListAdapter;
 
-unsafe impl linked_list::Adapter for SchedListAdapter {
+impl linked_list::Adapter for SchedListAdapter {
     type Ptr = ThreadPtr;
     type Value = Tcb;
 
-    fn offset_of_link(&self) -> usize {
-        mem::offset_of!(Tcb, sched_link)
+    unsafe fn raw_to_link(
+        &self,
+        raw: NonNull<Self::Value>,
+    ) -> NonNull<linked_list::Link<Self::Value>> {
+        unsafe {
+            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).sched_link.get_mut());
+            NonNull::new_unchecked(ptr)
+        }
     }
 
     fn ptr_to_raw(&self, ptr: ThreadPtr) -> NonNull<Tcb> {
@@ -176,14 +191,47 @@ unsafe impl linked_list::Adapter for SchedListAdapter {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct ThreadListAdapter;
 
-unsafe impl linked_list::Adapter for ThreadListAdapter {
+impl linked_list::Adapter for ThreadListAdapter {
     type Ptr = ThreadPtr;
     type Value = Tcb;
 
-    fn offset_of_link(&self) -> usize {
-        mem::offset_of!(Tcb, thread_link)
+    unsafe fn raw_to_link(
+        &self,
+        raw: NonNull<Self::Value>,
+    ) -> NonNull<linked_list::Link<Self::Value>> {
+        unsafe {
+            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).thread_link.get_mut());
+            NonNull::new_unchecked(ptr)
+        }
+    }
+
+    fn ptr_to_raw(&self, ptr: ThreadPtr) -> NonNull<Tcb> {
+        ptr.0
+    }
+
+    unsafe fn ptr_from_raw(&self, raw: NonNull<Tcb>) -> ThreadPtr {
+        ThreadPtr(raw)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct DeferAdapter;
+
+impl singly_linked_list::Adapter for DeferAdapter {
+    type Ptr = ThreadPtr;
+    type Value = Tcb;
+
+    unsafe fn raw_to_link(
+        &self,
+        raw: NonNull<Self::Value>,
+    ) -> NonNull<singly_linked_list::Link<Self::Value>> {
+        unsafe {
+            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).defer_link.get_mut());
+            NonNull::new_unchecked(ptr)
+        }
     }
 
     fn ptr_to_raw(&self, ptr: ThreadPtr) -> NonNull<Tcb> {
@@ -258,8 +306,9 @@ impl ThreadPtr {
 
         // Initialize thread context
         let tcb = Tcb {
-            sched_link: PauseCell::new(Link::unlinked()),
-            thread_link: PauseCell::new(Link::unlinked()),
+            sched_link: PauseCell::new(linked_list::Link::unlinked()),
+            thread_link: PauseCell::new(linked_list::Link::unlinked()),
+            defer_link: PauseCell::new(singly_linked_list::Link::unlinked()),
 
             state: PauseCell::cell(State::Ready),
             term_action: PauseCell::cell(TermAction::None),

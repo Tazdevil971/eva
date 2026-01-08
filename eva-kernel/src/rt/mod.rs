@@ -23,11 +23,12 @@ use eva_abi::ThreadId;
 use pause::pend_yield;
 use pause::{PauseCell, PauseToken, run_scheduler, with_pause, yield_now_from_paused};
 use sched_queue::SchedQueue;
-use thread::{AtomicThreadPtr, TermAction, ThreadPtr};
+use thread::{AtomicThreadPtr, DeferAdapter, TermAction, ThreadPtr};
 use thread_list::ThreadList;
 
 use eva_abi::OsError;
 pub use eva_abi::{Priority, Thread, ThreadFn};
+use eva_utils::atomic_linked_list::AtomicLinkedList;
 
 use crate::port::{self, Impl as _};
 
@@ -55,6 +56,7 @@ struct Scheduler {
     state: PauseCell<Cell<State>>,
     sched_queue: PauseCell<RefCell<SchedQueue>>,
     thread_list: PauseCell<RefCell<ThreadList>>,
+    resume_defer_list: AtomicLinkedList<DeferAdapter>,
     next_tid: AtomicU32,
     current: AtomicThreadPtr,
 }
@@ -63,6 +65,7 @@ static SCHEDULER: Scheduler = Scheduler {
     state: PauseCell::cell(State::Idle),
     sched_queue: PauseCell::ref_cell(SchedQueue::new()),
     thread_list: PauseCell::ref_cell(ThreadList::new()),
+    resume_defer_list: AtomicLinkedList::new(DeferAdapter),
     next_tid: AtomicU32::new(1),
     current: AtomicThreadPtr::new(None),
 };
@@ -374,9 +377,14 @@ fn resume_paused_raw(token: PauseToken, thread: ThreadPtr) -> Result<(), OsError
     Ok(())
 }
 
+fn resume_irq_raw(thread: ThreadPtr) {
+    SCHEDULER.resume_defer_list.push_front(thread);
+}
+
 #[unsafe(export_name = "eva_rt_resume_irq_unchecked")]
-pub unsafe fn resume_irq_unchecked(_thread: Thread) -> Result<(), OsError> {
-    todo!("IRQ support not yet implemented!")
+pub unsafe fn resume_irq_unchecked(thread: Thread) {
+    let thread = unsafe { ThreadPtr::from_abi(thread) };
+    resume_irq_raw(thread);
 }
 
 #[unsafe(export_name = "eva_rt_resume_paused")]
@@ -452,6 +460,14 @@ pub fn suspend_and_yield_paused_until(token: PauseToken, time: Duration) -> bool
     })
 }
 
+fn run_scheduler_defer_ops(token: PauseToken) {
+    let mut resume = SCHEDULER.resume_defer_list.take();
+    while let Some(thread) = resume.pop_front() {
+        // Not much we can do about errors here
+        let _ = resume_paused_raw(token, thread);
+    }
+}
+
 fn run_scheduler_paused(token: PauseToken) {
     let thread = current_raw();
 
@@ -477,6 +493,7 @@ pub unsafe fn tick() {
         if SCHEDULER.state.get(token) == State::Running {
             let now = crate::time::get_time();
 
+            run_scheduler_defer_ops(token);
             run_scheduler_paused(token);
             time::run_time_driver_paused(token, now);
         }
@@ -485,13 +502,6 @@ pub unsafe fn tick() {
 
 /// Initialize the scheduler, switching it to running mode.
 pub unsafe fn init() {
-    const IDLE_STACK: usize = 4096;
-
-    unsafe extern "C" fn idle_launcher(_: *mut (), _: *mut (), _: *mut (), _: *mut ()) -> ! {
-        yield_now();
-        loop {}
-    }
-
     let idle = idle::create();
 
     // Install idle thread
@@ -504,8 +514,5 @@ pub unsafe fn init() {
         unsafe {
             set_current_paused(token, idle);
         }
-
-        // We are ready! Set state to running
-        SCHEDULER.state.set(token, State::Running);
     });
 }

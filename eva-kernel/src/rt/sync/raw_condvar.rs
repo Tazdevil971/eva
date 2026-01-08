@@ -5,11 +5,10 @@ use crate::rt::pause::{PauseToken, with_pause};
 use crate::rt::sync::raw_mutex::RawMutex;
 use crate::rt::wake_list::PriorityWakeList;
 use crate::time::get_time;
-use crate::utils::{assert_abi_compatible, assert_send, assert_sync};
-
-use scopeguard::defer;
 
 use bytemuck::Zeroable;
+use eva_utils::{assert_cast_ref_compatible, assert_send, assert_sync, assert_zeroable};
+use scopeguard::defer;
 
 #[derive(Zeroable)]
 pub struct RawCondvar {
@@ -18,7 +17,8 @@ pub struct RawCondvar {
 
 assert_send!(RawCondvar);
 assert_sync!(RawCondvar);
-assert_abi_compatible!(eva_abi::Condvar2 => RawCondvar);
+assert_zeroable!(RawCondvar);
+assert_cast_ref_compatible!(eva_abi::Condvar2 => RawCondvar);
 
 impl RawCondvar {
     pub const fn new() -> Self {

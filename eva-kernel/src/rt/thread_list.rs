@@ -1,7 +1,8 @@
 use core::ptr::{NonNull, addr_eq};
 
 use crate::rt::thread::{ThreadListAdapter, ThreadPtr};
-use crate::utils::linked_list::LinkedList;
+
+use eva_utils::linked_list::LinkedList;
 
 pub struct ThreadList {
     list: LinkedList<ThreadListAdapter>,

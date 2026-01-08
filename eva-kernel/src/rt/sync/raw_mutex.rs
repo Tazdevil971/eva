@@ -5,9 +5,9 @@ use crate::rt;
 use crate::rt::pause::{PauseToken, with_pause};
 use crate::rt::wake_list::PriorityWakeList;
 use crate::time::get_time;
-use crate::utils::{assert_abi_compatible, assert_send, assert_sync};
 
 use bytemuck::Zeroable;
+use eva_utils::{assert_cast_ref_compatible, assert_send, assert_sync, assert_zeroable};
 
 #[derive(Zeroable)]
 pub struct RawMutex {
@@ -17,7 +17,8 @@ pub struct RawMutex {
 
 assert_send!(RawMutex);
 assert_sync!(RawMutex);
-assert_abi_compatible!(eva_abi::Mutex2 => RawMutex);
+assert_zeroable!(RawMutex);
+assert_cast_ref_compatible!(eva_abi::Mutex2 => RawMutex);
 
 impl RawMutex {
     pub fn lock_paused(&self, token: PauseToken) {

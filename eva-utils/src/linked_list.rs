@@ -7,17 +7,18 @@ use bytemuck::Zeroable;
 /// Structure used to embed the required pointers inside the node.
 #[repr(align(2))]
 #[derive(Debug)]
-pub struct Link {
-    next: Cell<Option<NonNull<Link>>>,
-    prev: Cell<Option<NonNull<Link>>>,
+pub struct Link<T> {
+    next: Cell<Option<NonNull<T>>>,
+    prev: Cell<Option<NonNull<T>>>,
 }
 
-unsafe impl Send for Link {}
+unsafe impl<T> Send for Link<T> {}
 
-impl Link {
+impl<T> Link<T> {
+    // TODO: Provenance?
     /// Internal marker used to signal an unlinked node.
-    const UNLINKED_MARKER: Option<NonNull<Link>> =
-        unsafe { Some(NonNull::new_unchecked(1 as *mut Link)) };
+    const UNLINKED_MARKER: Option<NonNull<T>> =
+        unsafe { Some(NonNull::new_unchecked(1 as *mut T)) };
 
     /// Create a new unlinked node.
     pub const fn unlinked() -> Self {
@@ -32,31 +33,29 @@ impl Link {
         self.next.get() != Self::UNLINKED_MARKER
     }
 
-    fn set_next(&self, value: Option<NonNull<Link>>) {
-        self.next.set(value)
-    }
-
-    fn set_prev(&self, value: Option<NonNull<Link>>) {
-        self.prev.set(value)
-    }
-
     fn set_unlinked(&self) {
-        self.set_next(Self::UNLINKED_MARKER);
-        self.set_prev(Self::UNLINKED_MARKER);
+        self.next.set(Self::UNLINKED_MARKER);
+        self.prev.set(Self::UNLINKED_MARKER);
+    }
+}
+
+impl<T> Drop for Link<T> {
+    fn drop(&mut self) {
+        // Shouldn't happen, but check anyways
+        assert!(!self.is_linked(), "dropped node linked to a lise");
     }
 }
 
 /// Trait defining how a particular node should be used.
-/// # Safety
-/// This trait is unsafe because `offset_of_link` despite being safe to call, must return a valid offset.
-pub unsafe trait Adapter {
+pub trait Adapter {
     /// Pointer type used to transfer ownership from/to the linked list.
     type Ptr;
     /// Value obtained by dereferencing the pointer, and obtained by borrowing from the list.
     type Value;
 
-    /// Offset in bytes of `Link` from the start of `Value`.
-    fn offset_of_link(&self) -> usize;
+    /// Obtain a pointer to the links from a raw pointer to the node.
+    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Link<Self::Value>>;
+
     /// Convert a `Ptr` to a raw pointer to `Value`.
     fn ptr_to_raw(&self, ptr: Self::Ptr) -> NonNull<Self::Value>;
     /// Convert a raw pointer to `Value` to a `Ptr`.
@@ -67,9 +66,9 @@ pub unsafe trait Adapter {
 
 /// Intrusive linked list.
 #[derive(Zeroable)]
-pub struct LinkedList<A> {
-    head: Option<NonNull<Link>>,
-    tail: Option<NonNull<Link>>,
+pub struct LinkedList<A: Adapter> {
+    head: Option<NonNull<A::Value>>,
+    tail: Option<NonNull<A::Value>>,
     adapter: A,
 }
 
@@ -87,7 +86,7 @@ where
 {
 }
 
-impl<A> LinkedList<A> {
+impl<A: Adapter> LinkedList<A> {
     /// Create a new, empty, intrusive linked list.
     pub const fn new(adapter: A) -> Self {
         Self {
@@ -97,16 +96,15 @@ impl<A> LinkedList<A> {
         }
     }
 
-    /// Check if this list is empty.
-    pub fn is_empty(&self) -> bool {
-        self.head.is_none()
+    unsafe fn node_to_links<'a>(&self, node: NonNull<A::Value>) -> &'a Link<A::Value> {
+        unsafe { self.adapter.raw_to_link(node).as_ref() }
     }
 
     /// Internal method used to link two nodes together.
-    unsafe fn link2(&mut self, prev: Option<NonNull<Link>>, next: Option<NonNull<Link>>) {
+    unsafe fn link2(&mut self, prev: Option<NonNull<A::Value>>, next: Option<NonNull<A::Value>>) {
         if let Some(prev) = prev {
             unsafe {
-                prev.as_ref().set_next(next);
+                self.node_to_links(prev).next.set(next);
             }
         } else {
             self.head = next;
@@ -114,7 +112,7 @@ impl<A> LinkedList<A> {
 
         if let Some(next) = next {
             unsafe {
-                next.as_ref().set_prev(prev);
+                self.node_to_links(next).prev.set(prev);
             }
         } else {
             self.tail = prev;
@@ -124,9 +122,9 @@ impl<A> LinkedList<A> {
     /// Internal method used to link three nodes together.
     unsafe fn link3(
         &mut self,
-        prev: Option<NonNull<Link>>,
-        center: NonNull<Link>,
-        next: Option<NonNull<Link>>,
+        prev: Option<NonNull<A::Value>>,
+        center: NonNull<A::Value>,
+        next: Option<NonNull<A::Value>>,
     ) {
         unsafe {
             self.link2(prev, Some(center));
@@ -134,103 +132,82 @@ impl<A> LinkedList<A> {
         }
     }
 
-    /// Internal method used to unlink a center node from a sequence of three nodes.
-    unsafe fn unlink(link: NonNull<Link>) {
-        unsafe { link.as_ref().set_unlinked() }
+    unsafe fn unlink(&self, node: NonNull<A::Value>) {
+        unsafe { self.node_to_links(node).set_unlinked() }
     }
 
-    unsafe fn is_linked(link: NonNull<Link>) -> bool {
-        unsafe { link.as_ref().is_linked() }
+    unsafe fn is_linked(&self, node: NonNull<A::Value>) -> bool {
+        unsafe { self.node_to_links(node).is_linked() }
     }
 
-    unsafe fn next(link: NonNull<Link>) -> Option<NonNull<Link>> {
-        unsafe { link.as_ref().next.get() }
+    unsafe fn next(&self, node: NonNull<A::Value>) -> Option<NonNull<A::Value>> {
+        unsafe { self.node_to_links(node).next.get() }
     }
 
-    unsafe fn prev(link: NonNull<Link>) -> Option<NonNull<Link>> {
-        unsafe { link.as_ref().prev.get() }
-    }
-}
-
-impl<A> LinkedList<A>
-where
-    A: Adapter,
-{
-    unsafe fn link_to_raw(&self, link: NonNull<Link>) -> NonNull<A::Value> {
-        unsafe {
-            // SAFETY: adapter must return a valid offset
-            // SAFETY: Caller assures that link is a valid pointer
-            link.byte_sub(self.adapter.offset_of_link())
-                .cast::<A::Value>()
-        }
+    unsafe fn prev(&self, node: NonNull<A::Value>) -> Option<NonNull<A::Value>> {
+        unsafe { self.node_to_links(node).prev.get() }
     }
 
-    unsafe fn link_from_raw(&self, raw: NonNull<A::Value>) -> NonNull<Link> {
-        unsafe {
-            // SAFETY: adapter must return a valid offset
-            // SAFETY: Caller assures that raw is a valid pointer
-            raw.byte_add(self.adapter.offset_of_link()).cast::<Link>()
-        }
-    }
-
-    unsafe fn post_unlink(&self, link: NonNull<Link>) -> A::Ptr {
+    unsafe fn release_ownership(&self, node: NonNull<A::Value>) -> A::Ptr {
         unsafe {
             // SAFETY: Caller assures that link is a valid pointer
-            LinkedList::<A>::unlink(link);
-            self.adapter.ptr_from_raw(self.link_to_raw(link))
+            self.unlink(node);
+            self.adapter.ptr_from_raw(node)
         }
     }
 
-    fn pre_link(&self, ptr: A::Ptr) -> NonNull<Link> {
-        let raw = self.adapter.ptr_to_raw(ptr);
-        let link = unsafe {
-            // SAFETY: ptr_to_raw must return a valid pointer
-            self.link_from_raw(raw)
-        };
+    fn take_ownership(&self, ptr: A::Ptr) -> NonNull<A::Value> {
+        let node = self.adapter.ptr_to_raw(ptr);
 
         // Check that the node was not linked to anything
         assert!(
-            unsafe { !LinkedList::<A>::is_linked(link) },
+            unsafe { !self.is_linked(node) },
             "Attempted to link an already linked node!"
         );
 
-        link
-    }
-
-    unsafe fn link_to_ref<'a>(&self, link: NonNull<Link>) -> &'a A::Value {
-        unsafe {
-            // SAFETY: Caller assures that link is a valid pointer
-            // SAFETY: Caller assures that this does not alias
-            self.link_to_raw(link).as_ref()
-        }
-    }
-
-    unsafe fn link_to_ref_mut<'a>(&self, link: NonNull<Link>) -> &'a mut A::Value {
-        unsafe {
-            // SAFETY: Caller assures that link is a valid pointer
-            // SAFETY: Caller assures that this does not alias
-            self.link_to_raw(link).as_mut()
-        }
+        node
     }
 }
 
-impl<A> LinkedList<A>
-where
-    A: Adapter,
-{
+impl<A: Adapter> LinkedList<A> {
+    /// Check if this list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.head.is_none()
+    }
+
+    /// Remove all of the elements from this list
+    pub fn clear(&mut self) {
+        let mut cur = self.head;
+
+        while let Some(node) = cur {
+            cur = unsafe {
+                // SAFETY: node is always a valid pointer
+                self.next(node)
+            };
+
+            unsafe {
+                // SAFETY: node is always a valid pointer
+                self.release_ownership(node);
+            }
+        }
+
+        self.head = None;
+        self.tail = None;
+    }
+
     /// Retrieve the first element of the linked list.
     pub fn front(&self) -> Option<&A::Value> {
-        self.head.map(|link| unsafe {
+        self.head.map(|node| unsafe {
             // SAFETY: head is always a valid pointer
-            self.link_to_ref(link)
+            node.as_ref()
         })
     }
 
     /// Retrieve the last element of the linked list.
     pub fn back(&self) -> Option<&A::Value> {
-        self.tail.map(|link| unsafe {
+        self.tail.map(|node| unsafe {
             // SAFETY: tail is always a valid pointer
-            self.link_to_ref(link)
+            node.as_ref()
         })
     }
 
@@ -239,15 +216,15 @@ where
         let mut cur = self.head;
 
         core::iter::from_fn(move || {
-            let link = cur?;
+            let node = cur?;
             cur = unsafe {
-                // SAFETY: link is always a valid pointer
-                LinkedList::<A>::next(link)
+                // SAFETY: node is always a valid pointer
+                self.next(node)
             };
 
             Some(unsafe {
-                // SAFETY: link is always a valid pointer
-                self.link_to_ref(link)
+                // SAFETY: node is always a valid pointer
+                node.as_ref()
             })
         })
     }
@@ -257,38 +234,38 @@ where
         let mut cur = self.head;
 
         core::iter::from_fn(move || {
-            let link = cur?;
+            let mut node = cur?;
             cur = unsafe {
-                // SAFETY: link is always a valid pointer
-                LinkedList::<A>::next(link)
+                // SAFETY: node is always a valid pointer
+                self.next(node)
             };
 
             Some(unsafe {
-                // SAFETY: link is always a valid pointer
-                self.link_to_ref_mut(link)
+                // SAFETY: node is always a valid pointer
+                node.as_mut()
             })
         })
     }
 
     /// Push a new element to the front of the list.
     pub fn push_front(&mut self, node: A::Ptr) {
-        let link = self.pre_link(node);
+        let node = self.take_ownership(node);
 
         unsafe {
-            // SAFETY: pre_link always returns a valid pointer
+            // SAFETY: take_ownership always returns a valid pointer
             // SAFETY: head is always a valid pointer
-            self.link3(None, link, self.head);
+            self.link3(None, node, self.head);
         }
     }
 
     /// Push a new element to the back of the list.
     pub fn push_back(&mut self, node: A::Ptr) {
-        let link = self.pre_link(node);
+        let node = self.take_ownership(node);
 
         unsafe {
-            // SAFETY: pre_link always returns a valid pointer
+            // SAFETY: take_ownership always returns a valid pointer
             // SAFETY: tail is always a valid pointer
-            self.link3(self.tail, link, None);
+            self.link3(self.tail, node, None);
         }
     }
 
@@ -297,7 +274,7 @@ where
         if let Some(head) = self.head {
             let next = unsafe {
                 // SAFETY: head is always a valid pointer
-                Self::next(head)
+                self.next(head)
             };
 
             unsafe {
@@ -308,7 +285,7 @@ where
             Some(unsafe {
                 // SAFETY: head is always valid
                 // SAFETY: head no longer belongs to the queue
-                self.post_unlink(head)
+                self.release_ownership(head)
             })
         } else {
             None
@@ -320,7 +297,7 @@ where
         if let Some(tail) = self.tail {
             let prev = unsafe {
                 // SAFETY: tail is always a valid pointer
-                Self::prev(tail)
+                self.prev(tail)
             };
 
             unsafe {
@@ -331,7 +308,7 @@ where
             Some(unsafe {
                 // SAFETY: tail is always valid
                 // SAFETY: tail no longer belongs to the queue
-                self.post_unlink(tail)
+                self.release_ownership(tail)
             })
         } else {
             None
@@ -346,7 +323,7 @@ where
                 let head = unsafe {
                     // SAFETY: head is always a valid pointer
                     // SAFETY: We reduced the scope that this reference doesn't outlive the node
-                    self.link_to_ref(head)
+                    head.as_ref()
                 };
 
                 if !f(head) {
@@ -356,7 +333,7 @@ where
 
             let next = unsafe {
                 // SAFETY: head is always a valid pointer
-                Self::next(head)
+                self.next(head)
             };
 
             unsafe {
@@ -367,7 +344,7 @@ where
             Some(unsafe {
                 // SAFETY: head is always valid
                 // SAFETY: head no longer belongs to the queue
-                self.post_unlink(head)
+                self.release_ownership(head)
             })
         } else {
             None
@@ -382,7 +359,7 @@ where
                 let tail = unsafe {
                     // SAFETY: tail is always a valid pointer
                     // SAFETY: We reduced the scope that this reference doesn't outlive the node
-                    self.link_to_ref(tail)
+                    tail.as_ref()
                 };
 
                 if !f(tail) {
@@ -392,7 +369,7 @@ where
 
             let prev = unsafe {
                 // SAFETY: tail is always a valid pointer
-                Self::prev(tail)
+                self.prev(tail)
             };
 
             unsafe {
@@ -403,7 +380,7 @@ where
             Some(unsafe {
                 // SAFETY: tail is always valid
                 // SAFETY: tail no longer belongs to the queue
-                self.post_unlink(tail)
+                self.release_ownership(tail)
             })
         } else {
             None
@@ -414,16 +391,11 @@ where
     /// Allows to obtain a reference to a node with only a raw pointer to it.
     /// This allows to store a reference to a node without having to worry about lifetimes.
     /// # Safety
-    /// - `raw` must be a valid pointer.
-    /// - `raw` must be a node currently inserted in this queue.
-    pub unsafe fn cursor_mut_from_raw(&mut self, raw: NonNull<A::Value>) -> CursorMut<'_, A> {
-        let link = unsafe {
-            // SAFETY: Caller assures that raw is a valid pointer
-            self.link_from_raw(raw)
-        };
-
+    /// - `node` must be a valid pointer.
+    /// - `node` must be a node currently inserted in this queue.
+    pub unsafe fn cursor_mut_from_raw(&mut self, node: NonNull<A::Value>) -> CursorMut<'_, A> {
         CursorMut {
-            cur: Some(link),
+            cur: Some(node),
             list: self,
         }
     }
@@ -445,6 +417,12 @@ where
     }
 }
 
+impl<A: Adapter> Drop for LinkedList<A> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 impl<A> Debug for LinkedList<A>
 where
     A: Adapter,
@@ -457,8 +435,8 @@ where
 
 /// Mutable cursor to allow for positioned operations inside the linked list.
 /// Conceptually this threats the linked list as a circular list where the two extremities are joined by a "fictitious" node.
-pub struct CursorMut<'a, A> {
-    cur: Option<NonNull<Link>>,
+pub struct CursorMut<'a, A: Adapter> {
+    cur: Option<NonNull<A::Value>>,
     list: &'a mut LinkedList<A>,
 }
 
@@ -469,18 +447,18 @@ where
     /// Obtain the currently pointed value.
     /// Returns None if this points to the fictitious node.
     pub fn current(&self) -> Option<&A::Value> {
-        self.cur.map(|link| unsafe {
+        self.cur.map(|node| unsafe {
             // SAFETY: cur is always a valid pointer
-            self.list.link_to_ref(link)
+            node.as_ref()
         })
     }
 
     /// Obtain the currently pointed value, mutably.
     /// Returns None if this points to the fictitious node.
     pub fn current_mut(&mut self) -> Option<&mut A::Value> {
-        self.cur.map(|link| unsafe {
+        self.cur.map(|mut node| unsafe {
             // SAFETY: cur is always a valid pointer
-            self.list.link_to_ref_mut(link)
+            node.as_mut()
         })
     }
 
@@ -489,7 +467,7 @@ where
         if let Some(cur) = self.cur {
             self.cur = unsafe {
                 // SAFETY: cur is always a valid pointer
-                LinkedList::<A>::next(cur)
+                self.list.next(cur)
             };
         } else {
             self.cur = self.list.head;
@@ -501,7 +479,7 @@ where
         if let Some(cur) = self.cur {
             self.cur = unsafe {
                 // SAFETY: cur is always a valid pointer
-                LinkedList::<A>::next(cur)
+                self.list.prev(cur)
             };
         } else {
             self.cur = self.list.tail;
@@ -513,13 +491,13 @@ where
         let next = if let Some(cur) = self.cur {
             unsafe {
                 // SAFETY: cur is always a valid pointer
-                LinkedList::<A>::next(cur)
+                self.list.next(cur)
             }
         } else {
             self.list.head
         };
 
-        let link = self.list.pre_link(ptr);
+        let link = self.list.take_ownership(ptr);
 
         unsafe {
             // SAFETY: cur is always a valid pointer
@@ -533,13 +511,13 @@ where
         let prev = if let Some(cur) = self.cur {
             unsafe {
                 // SAFETY: cur is always a valid pointer
-                LinkedList::<A>::prev(cur)
+                self.list.prev(cur)
             }
         } else {
             self.list.tail
         };
 
-        let link = self.list.pre_link(ptr);
+        let link = self.list.take_ownership(ptr);
 
         unsafe {
             // SAFETY: cur is always a valid pointer
@@ -553,7 +531,7 @@ where
         if let Some(cur) = self.cur {
             let (next, prev) = unsafe {
                 // SAFETY: cur is always a valid pointer
-                (LinkedList::<A>::next(cur), LinkedList::<A>::prev(cur))
+                (self.list.next(cur), self.list.prev(cur))
             };
 
             unsafe {
@@ -567,7 +545,7 @@ where
             Some(unsafe {
                 // SAFETY: cur is always valid
                 // SAFETY: cur no longer belongs to the queue
-                self.list.post_unlink(cur)
+                self.list.release_ownership(cur)
             })
         } else {
             None

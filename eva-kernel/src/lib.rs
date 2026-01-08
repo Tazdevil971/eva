@@ -17,7 +17,5 @@ pub mod time;
 
 /// Internal ABI implementation.
 mod c_abi;
-/// Internal panic implementation.
+// /// Internal panic implementation.
 // mod panic;
-/// Internal utilities.
-mod utils;

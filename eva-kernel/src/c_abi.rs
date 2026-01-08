@@ -163,9 +163,9 @@ unsafe extern "C" fn eva_c_rt_resume_unchecked(thread: Thread2) -> c_int {
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn eva_c_rt_resume_irq_unchecked(thread: Thread2) -> c_int {
+unsafe extern "C" fn eva_c_rt_resume_irq_unchecked(thread: Thread2) {
     let thread = unsafe { Thread::from_unchecked(thread) };
-    convert_result(unsafe { crate::rt::resume_irq_unchecked(thread) })
+    unsafe { crate::rt::resume_irq_unchecked(thread) }
 }
 
 #[unsafe(no_mangle)]

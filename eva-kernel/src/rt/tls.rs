@@ -1,16 +1,15 @@
 use alloc::boxed::Box;
 use core::cell::RefCell;
-use core::mem;
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 
 use crate::rt;
 use crate::rt::pause::PauseCell;
 use crate::rt::sync::Mutex;
-use crate::utils::linked_list::{self, Link, LinkedList};
-use crate::utils::slot_map::SlotMap;
 
 use eva_abi::OsError;
 pub use eva_abi::{TlsDtor, TlsKey};
+use eva_utils::linked_list::{self, LinkedList};
+use eva_utils::slot_map::SlotMap;
 
 static KEY_STORE: Mutex<SlotMap<Option<TlsDtor>>> = Mutex::new(SlotMap::new());
 
@@ -58,19 +57,25 @@ pub fn get_specific(key: TlsKey) -> Option<NonNull<()>> {
 
 #[derive(Debug)]
 struct KeyNode {
-    link: PauseCell<Link>,
+    link: PauseCell<linked_list::Link<Self>>,
     key: TlsKey,
     data: NonNull<()>,
 }
 
 struct KeyNodeAdapter;
 
-unsafe impl linked_list::Adapter for KeyNodeAdapter {
+impl linked_list::Adapter for KeyNodeAdapter {
     type Ptr = Box<KeyNode>;
     type Value = KeyNode;
 
-    fn offset_of_link(&self) -> usize {
-        mem::offset_of!(KeyNode, link)
+    unsafe fn raw_to_link(
+        &self,
+        raw: NonNull<Self::Value>,
+    ) -> NonNull<linked_list::Link<Self::Value>> {
+        unsafe {
+            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).link.get_mut());
+            NonNull::new_unchecked(ptr)
+        }
     }
 
     unsafe fn ptr_from_raw(&self, raw: NonNull<KeyNode>) -> Box<KeyNode> {
@@ -114,7 +119,7 @@ impl LocalStore {
             node.data = data;
         } else {
             list.push_back(Box::new(KeyNode {
-                link: PauseCell::new(Link::unlinked()),
+                link: PauseCell::new(linked_list::Link::unlinked()),
                 key,
                 data,
             }));

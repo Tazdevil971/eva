@@ -2,6 +2,8 @@ use core::fmt::{self, Debug, Pointer};
 use core::ops::Deref;
 use core::ptr::NonNull;
 
+// TODO: This is not very sound, find a better way of doing this!
+
 /// Erase the lifetime of a reference, allowing it to be moved around more easily.
 /// This only provides immutable access to the erased reference to provide _slightly_ more safety.
 /// This has the same layout as `NonNull<T>` and is guaranteed to be ABI compatible with it.

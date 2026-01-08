@@ -1,10 +1,11 @@
 use crate::rt::thread::{SchedListAdapter, ThreadPtr};
-use crate::utils::bitset::Bitset32;
-use crate::utils::linked_list::LinkedList;
+
+use eva_utils::bitset::BitSet;
+use eva_utils::linked_list::LinkedList;
 
 #[derive(Debug)]
 pub struct SchedQueue {
-    ready: Bitset32,
+    ready: BitSet<u32, 1>,
     lists: [LinkedList<SchedListAdapter>; 32],
     idle: Option<ThreadPtr>,
 }
@@ -12,7 +13,7 @@ pub struct SchedQueue {
 impl SchedQueue {
     pub const fn new() -> Self {
         Self {
-            ready: Bitset32::empty(),
+            ready: BitSet::<u32, 1>::empty(),
             lists: [const { LinkedList::new(SchedListAdapter) }; 32],
             idle: None,
         }

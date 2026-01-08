@@ -4,7 +4,7 @@ use core::ptr;
 use crate::rt::pause::{PauseCell, PauseToken, with_pause};
 use crate::rt::thread::{ThreadListAdapter, ThreadPtr};
 use crate::rt::{self, IDLE_PRIORITY, yield_now};
-use crate::utils::linked_list::LinkedList;
+use eva_utils::linked_list::LinkedList;
 
 const IDLE_STACK: usize = 4096;
 

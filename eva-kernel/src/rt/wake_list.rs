@@ -1,17 +1,17 @@
 use core::cell::UnsafeCell;
-use core::mem;
+use core::ptr;
 use core::ptr::NonNull;
 use core::time::Duration;
 
 use crate::rt;
 use crate::rt::pause::{PauseCell, PauseToken};
 use crate::rt::thread::ThreadPtr;
-use crate::utils::linked_list::{self, Link, LinkedList};
-use crate::utils::scopeguard::defer;
-use crate::utils::unchecked_ref::UncheckedRef;
-use crate::utils::{assert_send, assert_sync};
 
 use bytemuck::Zeroable;
+use eva_utils::linked_list::{self, LinkedList};
+use eva_utils::unchecked_ref::UncheckedRef;
+use eva_utils::{assert_send, assert_sync};
+use scopeguard::defer;
 
 /*
 
@@ -29,7 +29,7 @@ in the destructor, and enforce manual explicit unsafe destruction
 
 #[derive(Debug)]
 pub struct PriorityWakeup {
-    link: PauseCell<Link>,
+    link: PauseCell<linked_list::Link<Self>>,
     thread: ThreadPtr,
 }
 
@@ -45,12 +45,18 @@ impl PriorityWakeup {
 #[derive(Zeroable)]
 struct PriorityWakeupAdapter;
 
-unsafe impl linked_list::Adapter for PriorityWakeupAdapter {
+impl linked_list::Adapter for PriorityWakeupAdapter {
     type Ptr = UncheckedRef<PriorityWakeup>;
     type Value = PriorityWakeup;
 
-    fn offset_of_link(&self) -> usize {
-        mem::offset_of!(PriorityWakeup, link)
+    unsafe fn raw_to_link(
+        &self,
+        raw: NonNull<Self::Value>,
+    ) -> NonNull<linked_list::Link<Self::Value>> {
+        unsafe {
+            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).link.get_mut());
+            NonNull::new_unchecked(ptr)
+        }
     }
 
     unsafe fn ptr_from_raw(&self, raw: NonNull<PriorityWakeup>) -> UncheckedRef<PriorityWakeup> {
@@ -84,7 +90,7 @@ impl PriorityWakeList {
         let thread = rt::current_raw();
 
         let node = PriorityWakeup {
-            link: PauseCell::new(Link::unlinked()),
+            link: PauseCell::new(linked_list::Link::unlinked()),
             thread,
         };
 
@@ -165,7 +171,7 @@ impl PriorityWakeList {
 
 #[derive(Debug)]
 pub struct TimedWakeup {
-    link: PauseCell<Link>,
+    link: PauseCell<linked_list::Link<Self>>,
     thread: ThreadPtr,
     timeout: Duration,
 }
@@ -182,12 +188,18 @@ impl TimedWakeup {
 #[derive(Zeroable)]
 struct TimedWakeupAdapter;
 
-unsafe impl linked_list::Adapter for TimedWakeupAdapter {
+impl linked_list::Adapter for TimedWakeupAdapter {
     type Ptr = UncheckedRef<TimedWakeup>;
     type Value = TimedWakeup;
 
-    fn offset_of_link(&self) -> usize {
-        mem::offset_of!(TimedWakeup, link)
+    unsafe fn raw_to_link(
+        &self,
+        raw: NonNull<Self::Value>,
+    ) -> NonNull<linked_list::Link<Self::Value>> {
+        unsafe {
+            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).link.get_mut());
+            NonNull::new_unchecked(ptr)
+        }
     }
 
     unsafe fn ptr_from_raw(&self, raw: NonNull<TimedWakeup>) -> UncheckedRef<TimedWakeup> {
@@ -216,7 +228,7 @@ impl TimedWakeList {
         F: FnOnce(PauseToken, &TimedWakeup) -> T,
     {
         let node = TimedWakeup {
-            link: PauseCell::new(Link::unlinked()),
+            link: PauseCell::new(linked_list::Link::unlinked()),
             thread: rt::current_raw(),
             timeout,
         };

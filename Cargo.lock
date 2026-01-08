@@ -95,6 +95,7 @@ dependencies = [
  "bytemuck",
  "critical-section",
  "eva-abi",
+ "eva-utils",
  "linked_list_allocator",
  "lock_api",
  "rtt-target",
@@ -122,6 +123,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "eva-utils"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "num-traits",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -146,6 +155,15 @@ checksum = "07af8b9cdd281b7915f413fa73f29ebd5d55d0d3f0155584dade1ff18cea1b17"
 dependencies = [
  "autocfg",
  "scopeguard",
+]
+
+[[package]]
+name = "num-traits"
+version = "0.2.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
+dependencies = [
+ "autocfg",
 ]
 
 [[package]]
