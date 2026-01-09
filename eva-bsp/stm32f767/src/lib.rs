@@ -280,9 +280,8 @@ unsafe extern "C" fn init_stage1() {
 
 extern "C" fn init_stage2(_: *mut ()) {
     // Yay this is the first thread!
-    kprintln!("-> EVA scheduler [online]");
 
-    // Now that the scheduler is fully online, we can safely enable preemption
+    // Initialize preemption now, as the kernel is fully online
     {
         unsafe {
             // Retrieve the reload value for tenms
@@ -305,6 +304,7 @@ extern "C" fn init_stage2(_: *mut ()) {
         }
     }
 
+    kprintln!("-> EVA scheduler [online]");
     kprintln!("Pivoting control to user code, good luck!");
     kprintln!("--- EVA BOOTLOG ---");
 

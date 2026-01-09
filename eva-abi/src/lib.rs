@@ -336,7 +336,7 @@ unsafe extern "C" {
     pub unsafe fn eva_c_rt_spawn(
         stack_size: usize,
         priority: Priority,
-        entry: ThreadFn,
+        entry: extern "C" fn(*mut ()),
         name: *const c_char,
         user: *mut (),
     ) -> Thread2;
@@ -381,7 +381,7 @@ unsafe extern "C" {
     pub unsafe fn eva_c_rt_try_unpause() -> bool;
 
     // TLS functions
-    pub unsafe fn eva_c_rt_tls_key_create(dtor: Option<TlsDtor>) -> TlsKey2;
+    pub unsafe fn eva_c_rt_tls_key_create(dtor: Option<extern "C" fn(*mut ())>) -> TlsKey2;
     pub unsafe fn eva_c_rt_tls_key_delete(key: TlsKey2) -> c_int;
     pub unsafe fn eva_c_rt_tls_set_specific(key: TlsKey2, data: *mut ()) -> c_int;
     pub unsafe fn eva_c_rt_tls_get_specific(key: TlsKey2) -> *mut ();

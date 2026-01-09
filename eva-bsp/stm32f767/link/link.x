@@ -50,7 +50,7 @@ SECTIONS
     } > SRAM AT > FLASH
     __sidata = LOADADDR(.data);
 
-    .bss : ALIGN(8)
+    .bss (NOLOAD) : ALIGN(8)
     {
         __sbss = .;
         *(.bss)
@@ -59,12 +59,20 @@ SECTIONS
         __ebss = .;
     } > SRAM
 
-    __heap_start = .;
-    
+    __irq_stack_size = 64K;
 
-    /* We reserve 16KB for the IRQ stack */
-    __irq_stack_size = 64 * 1024;
+    .heap (NOLOAD)
+    {
+        __heap_start = .;
+        . += LENGTH(SRAM) - __irq_stack_size;
+        __heap_end = .;
+    } > SRAM
 
-    __heap_end = ORIGIN(SRAM) + LENGTH(SRAM) - __irq_stack_size;
-    __irq_stack_top = ORIGIN(SRAM) + LENGTH(SRAM);
+    __heap_size = __heap_end - __heap_start;
+
+    .irq_stack (NOLOAD) : ALIGN(8)
+    {
+        . += __irq_stack_size;
+        __irq_stack_top = .;
+    }
 }

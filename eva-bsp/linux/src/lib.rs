@@ -1,99 +1,128 @@
 #![no_std]
 use core::alloc::Layout;
-use core::arch::naked_asm;
-use core::ffi::{c_char, c_int};
+use core::arch::{asm, naked_asm};
+use core::ffi::{c_int, c_ulong, c_void};
+use core::mem::{self, offset_of, size_of};
+use core::ptr::{self, addr_of_mut};
 use core::time::Duration;
-use core::{fmt, mem, ptr};
 
-// Ice cream machine broke, come back another time :(
+use eva_kernel::{allocator, kprintln, port, rt};
+use linux_raw_sys::general::{
+    __kernel_clockid_t, __kernel_pid_t, __kernel_timer_t, CLOCK_THREAD_CPUTIME_ID, SA_ONSTACK,
+    SA_RESTART, SA_RESTORER, SA_SIGINFO, SIGEV_SIGNAL, SIGRTMIN, itimerspec, kernel_sigaction,
+    kernel_sigset_t, sigevent, siginfo, stack_t, timespec, ucontext,
+};
 
-// This cannot work as it used to depend on libc, but if we fully commit to target_os = "eva" libc no longer works.
-// linux_raw_sys can be an escape hatch, but it's missing some bindings, and is overall a pain to
-// use, but would COMPLETELY obliterate the dependency on libc, allowing linux userspace applications to use a custom libc.
+#[cfg(not(target_arch = "x86_64"))]
+compile_error!("only x86_64 is supported!");
 
-use eva_kernel::{allocator, kprintln, rt};
-use linux_raw_sys::general::*;
+static mut GLOBAL_TIMER: __kernel_timer_t = 0;
 
-static mut GLOBAL_TIMER: libc::timer_t = ptr::null_mut();
-
-fn scheduler_tick_signum() -> i32 {
-    libc::SIGRTMIN() + 0
-}
-
-fn timer_tick_signum() -> i32 {
-    libc::SIGRTMIN() + 1
-}
+const SCHEDULER_TICK_SIGNUM: c_int = SIGRTMIN as c_int + 0;
+const TIMER_TICK_SIGNUM: c_int = SIGRTMIN as c_int + 1;
 
 #[unsafe(no_mangle)]
-extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
-    init_stage1();
+#[unsafe(naked)]
+unsafe extern "C" fn _start() {
+    naked_asm!(
+        "
+        call {init_stage1}
 
-    // Jump to the first thread
-    unsafe {
-        libc::setcontext(SWITCHCTX);
-    }
+        mov rsi, {switchctx}
+        mov rcx, [rsi + 16]
+        mov rdx, [rsi + 24]
+        mov rbp, [rsi + 32]
+        mov rsp, [rsi + 40]
 
-    0
+        pop rdi
+        pop rsi
+        popf
+        ret
+        ",
+        init_stage1 = sym init_stage1,
+        switchctx = sym SWITCHCTX
+    );
 }
 
-fn init_stage1() {
+unsafe extern "C" fn init_stage1() {
     kprintln!("--- EVA BOOTLOG ---");
     kprintln!("-> EVA logger    [online]");
 
     // Initialize allocator
     {
-        // Simulate a good amount of RAM, 1MB
-        const SIZE: usize = 1024 * 1024;
+        unsafe extern "C" {
+            unsafe static mut __heap_start: u8;
+            unsafe static mut __heap_end: u8;
+        }
 
-        let mem = unsafe { libc::malloc(SIZE) as *mut u8 };
+        kprintln!(
+            "heap {:?} {:?}",
+            addr_of_mut!(__heap_start),
+            addr_of_mut!(__heap_end)
+        );
 
         unsafe {
-            allocator::init(mem, mem.add(SIZE));
+            allocator::init(addr_of_mut!(__heap_start), addr_of_mut!(__heap_end));
         }
 
         kprintln!("-> EVA allocator [online]");
     }
 
-    // Setup an alternative signal stack
+    // Setup the signal stack
     {
-        const SIZE: usize = 16 * 1024;
-
-        let mem = unsafe { libc::malloc(SIZE) };
-
-        let new = libc::stack_t {
-            ss_sp: mem,
-            ss_size: SIZE,
-            ss_flags: 0,
-        };
+        unsafe extern "C" {
+            unsafe static mut __irq_stack_bottom: u8;
+            unsafe static mut __irq_stack_top: u8;
+        }
 
         unsafe {
-            libc::sigaltstack(&new, ptr::null_mut());
+            let size = addr_of_mut!(__irq_stack_top)
+                .byte_offset_from_unsigned(addr_of_mut!(__irq_stack_bottom));
+
+            let new = stack_t {
+                ss_sp: addr_of_mut!(__irq_stack_bottom) as _,
+                ss_size: size as _,
+                ss_flags: 0,
+            };
+
+            sys_sigalstack(&new, ptr::null_mut());
         }
     }
 
     // Install scheduler tick signal
     {
-        let mut mask = unsafe { mem::zeroed() };
         unsafe {
-            libc::sigemptyset(&mut mask);
-        }
+            let new = kernel_sigaction {
+                sa_handler_kernel: Some(mem::transmute(scheduler_tick as *const ())),
+                sa_restorer: Some(restorer),
+                sa_mask: mem::zeroed(),
+                sa_flags: (SA_RESTORER | SA_ONSTACK | SA_SIGINFO | SA_RESTART) as _,
+            };
 
-        let new = libc::sigaction {
-            sa_sigaction: scheduler_tick as _,
-            sa_restorer: None,
-            sa_mask: mask,
-            sa_flags: libc::SA_ONSTACK | libc::SA_SIGINFO | libc::SA_RESTART,
-        };
-
-        unsafe {
-            libc::sigaction(scheduler_tick_signum(), &new, ptr::null_mut());
+            sys_sigaction(SCHEDULER_TICK_SIGNUM, &new, ptr::null_mut());
         }
     }
 
-    // Initialize scheduler
+    // Install timer tick signal
+    {
+        unsafe {
+            let mut mask = mem::zeroed();
+            sigaddset(&mut mask, SCHEDULER_TICK_SIGNUM);
+
+            let new = kernel_sigaction {
+                sa_handler_kernel: Some(timer_tick),
+                sa_restorer: Some(restorer),
+                sa_mask: mask,
+                sa_flags: (SA_RESTORER | SA_ONSTACK | SA_RESTART) as _,
+            };
+
+            sys_sigaction(TIMER_TICK_SIGNUM, &new, ptr::null_mut());
+        }
+    }
+
     {
         // Spawn first thread
-        rt::spawn(4096 * 16, 0, init_stage2, c"Main", ptr::null_mut());
+        rt::spawn(1024 * 256, 0, init_stage2, c"Main", ptr::null_mut());
 
         unsafe {
             // Launch the scheduler
@@ -105,48 +134,29 @@ fn init_stage1() {
 extern "C" fn init_stage2(_: *mut ()) {
     // Yay this is the first thread!
 
-    // Install timer tick signal
-    {
-        let mut mask = unsafe { mem::zeroed() };
-        unsafe {
-            libc::sigemptyset(&mut mask);
-            libc::sigaddset(&mut mask, scheduler_tick_signum());
-        }
-
-        let new = libc::sigaction {
-            sa_sigaction: timer_tick as _,
-            sa_restorer: None,
-            sa_mask: mask,
-            sa_flags: libc::SA_ONSTACK | libc::SA_SIGINFO | libc::SA_RESTART,
-        };
-
-        unsafe {
-            libc::sigaction(timer_tick_signum(), &new, ptr::null_mut());
-        }
-    }
-
-    // Initialize preemption timer
+    // Initialize the preemption timer
     {
         unsafe {
-            let mut event: libc::sigevent = mem::zeroed();
-            event.sigev_notify = libc::SIGEV_SIGNAL;
-            event.sigev_signo = timer_tick_signum();
+            let mut event: sigevent = mem::zeroed();
+            event.sigev_notify = SIGEV_SIGNAL as _;
+            event.sigev_signo = TIMER_TICK_SIGNUM;
 
-            libc::timer_create(
-                libc::CLOCK_THREAD_CPUTIME_ID,
+            sys_timer_create(
+                CLOCK_THREAD_CPUTIME_ID as _,
                 &mut event,
                 &raw mut GLOBAL_TIMER,
             );
 
-            let mut period: libc::timespec = mem::zeroed();
+            let mut period: timespec = mem::zeroed();
             period.tv_sec = 0;
             period.tv_nsec = 10_000_000;
 
-            let new = libc::itimerspec {
+            let new = itimerspec {
                 it_interval: period,
                 it_value: period,
             };
-            libc::timer_settime(GLOBAL_TIMER, 0, &new, ptr::null_mut());
+
+            sys_timer_settime(GLOBAL_TIMER, 0, &new, ptr::null_mut());
         }
     }
 
@@ -157,71 +167,272 @@ extern "C" fn init_stage2(_: *mut ()) {
     eva_kernel::kmain::invoke();
 }
 
-fn kprint_fmt(args: fmt::Arguments) {
-    use core::fmt::Write as _;
+#[unsafe(naked)]
+unsafe extern "C" fn restorer() {
+    naked_asm!(
+        "
+        mov rax, {}
+        syscall
+        ",
+        const linux_raw_sys::general::__NR_rt_sigreturn
+    )
+}
 
-    let mut new = unsafe { mem::zeroed() };
-    let mut old = unsafe { mem::zeroed() };
+fn sigaddset(set: &mut kernel_sigset_t, signo: c_int) -> c_int {
+    let word = (signo as usize - 1) / (mem::size_of::<c_ulong>() * 8);
+    let mask = 1 << ((signo as usize - 1) % (mem::size_of::<c_ulong>() * 8));
+    set.sig[word] |= mask;
+    0
+}
 
+#[inline(always)]
+unsafe fn sys_read(fd: c_int, buf: *mut c_void, count: usize) -> usize {
     unsafe {
-        // Block all possible signals
-        libc::sigfillset(&mut new);
-        libc::sigprocmask(libc::SIG_BLOCK, &new, &mut old);
+        let ret;
+        asm!(
+            "syscall",
+            inlateout("rax") linux_raw_sys::general::__NR_write as usize => ret,
+            in("rdi") fd,
+            in("rsi") buf,
+            in("rdx") count,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret
     }
+}
 
-    struct Writer;
-
-    impl fmt::Write for Writer {
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            let b = s.as_bytes();
-            unsafe {
-                libc::write(0, b.as_ptr() as _, b.len());
-            }
-            Ok(())
-        }
-    }
-
-    let _ = Writer.write_fmt(args);
-
+#[inline(always)]
+unsafe fn sys_write(fd: c_int, buf: *const c_void, count: usize) -> usize {
     unsafe {
-        libc::sigprocmask(libc::SIG_SETMASK, &old, ptr::null_mut());
+        let ret;
+        asm!(
+            "syscall",
+            inlateout("rax") linux_raw_sys::general::__NR_write as usize => ret,
+            in("rdi") fd,
+            in("rsi") buf,
+            in("rdx") count,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags, readonly)
+        );
+        ret
     }
+}
+
+#[inline(always)]
+unsafe fn sys_sigalstack(ss: *const stack_t, old_ss: *mut stack_t) -> c_int {
+    unsafe {
+        let ret: usize;
+        asm!(
+            "syscall",
+            inlateout("rax") linux_raw_sys::general::__NR_sigaltstack as usize => ret,
+            in("rdi") ss,
+            in("rsi") old_ss,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret as _
+    }
+}
+
+#[inline(always)]
+unsafe fn sys_sigaction(
+    signum: c_int,
+    act: *const kernel_sigaction,
+    oldact: *mut kernel_sigaction,
+) -> c_int {
+    unsafe {
+        let ret: usize;
+        asm!(
+            "syscall",
+            inlateout("rax") linux_raw_sys::general::__NR_rt_sigaction as usize => ret,
+            in("rdi") signum,
+            in("rsi") act,
+            in("rdx") oldact,
+            in("r10") mem::size_of::<kernel_sigset_t>(),
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret as _
+    }
+}
+
+#[inline(always)]
+unsafe fn sys_kill(pid: __kernel_pid_t, sig: c_int) -> c_int {
+    unsafe {
+        let ret: usize;
+        asm!(
+            "syscall",
+            inlateout("rax") linux_raw_sys::general::__NR_kill as usize => ret,
+            in("rdi") pid,
+            in("rsi") sig,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags, readonly)
+        );
+        ret as _
+    }
+}
+
+#[inline(always)]
+unsafe fn sys_timer_create(
+    clockid: __kernel_clockid_t,
+    sevp: *mut sigevent,
+    timerid: *mut __kernel_timer_t,
+) -> c_int {
+    unsafe {
+        let ret: usize;
+        asm!(
+            "syscall",
+            inlateout("rax") linux_raw_sys::general::__NR_timer_create as usize => ret,
+            in("rdi") clockid,
+            in("rsi") sevp,
+            in("rdx") timerid,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret as _
+    }
+}
+
+#[inline(always)]
+unsafe fn sys_timer_settime(
+    timerid: __kernel_timer_t,
+    flags: c_int,
+    new_value: *const itimerspec,
+    old_value: *mut itimerspec,
+) -> c_int {
+    unsafe {
+        let ret: usize;
+        asm!(
+            "syscall",
+            inlateout("rax") linux_raw_sys::general::__NR_timer_settime as usize => ret,
+            in("rdi") timerid,
+            in("rsi") flags,
+            in("rdx") new_value,
+            in("r10") old_value,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret as _
+    }
+}
+
+#[inline(always)]
+unsafe fn sys_clock_gettime(clockid: __kernel_clockid_t, tp: *mut timespec) -> c_int {
+    unsafe {
+        let ret: usize;
+        asm!(
+            "syscall",
+            inlateout("rax") linux_raw_sys::general::__NR_clock_gettime as usize => ret,
+            in("rdi") clockid,
+            in("rsi") tp,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags)
+        );
+        ret as _
+    }
+}
+
+#[repr(C)]
+struct SwitchStack {
+    rdi: u64,
+    rsi: u64,
+    eflags: u64,
+    rip: u64,
+}
+
+const DEFAULT_RFLAGS: u64 = 0x202;
+
+#[derive(Debug)]
+#[repr(C, align(16))]
+struct FxSave([u8; 512]);
+
+#[derive(Debug)]
+#[repr(C, align(64))]
+struct XSave([u8; 1024]);
+
+#[repr(C)]
+#[derive(Debug)]
+struct SwitchCtx {
+    rax: u64,
+    rbx: u64,
+    rcx: u64,
+    rdx: u64,
+    rbp: u64,
+    rsp: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+    fxsave: FxSave,
+    xsave: XSave,
 }
 
 struct PortabilityImpl;
 
-impl eva_kernel::port::Impl for PortabilityImpl {
+impl port::Impl for PortabilityImpl {
     fn switchctx_layout() -> Layout {
-        Layout::new::<libc::ucontext_t>()
+        Layout::new::<SwitchCtx>()
     }
 
     unsafe fn init_switchctx(
         switchctx_ptr: *mut u8,
         stack_ptr: *mut u8,
-        stack_size: usize,
+        _stack_size: usize,
         entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
         arg1: *mut (),
         arg2: *mut (),
         arg3: *mut (),
         arg4: *mut (),
     ) {
-        let context_ptr = switchctx_ptr as *mut libc::ucontext_t;
-
         unsafe {
-            libc::getcontext(context_ptr);
+            let stack_ptr = stack_ptr.sub(size_of::<SwitchStack>()).sub(8);
 
-            (*context_ptr).uc_link = ptr::null_mut();
-            (*context_ptr).uc_stack.ss_sp = stack_ptr as _;
-            (*context_ptr).uc_stack.ss_size = stack_size;
-            (*context_ptr).uc_stack.ss_flags = 0;
+            stack_ptr.cast::<SwitchStack>().write(SwitchStack {
+                rdi: arg1 as _,
+                rsi: arg2 as _,
+                eflags: DEFAULT_RFLAGS,
+                rip: entry as _,
+            });
 
-            let entry = mem::transmute(entry);
-            libc::makecontext(switchctx_ptr as _, entry, 4, arg1, arg2, arg3, arg4);
+            switchctx_ptr.cast::<SwitchCtx>().write(SwitchCtx {
+                rax: 0,
+                rbx: 0,
+                rcx: arg4 as _,
+                rdx: arg3 as _,
+                rbp: stack_ptr as _,
+                rsp: stack_ptr as _,
+                r8: 0,
+                r9: 0,
+                r10: 0,
+                r11: 0,
+                r12: 0,
+                r13: 0,
+                r14: 0,
+                r15: 0,
+                fxsave: FxSave([0; 512]),
+                xsave: XSave([0; 1024]),
+            })
         }
     }
 
-    unsafe fn drop_switchctx(_switchctx_ptr: *mut u8) {
-        // NO-OP, linux does not need to clean up anything
+    unsafe fn drop_switchctx(switchctx_ptr: *mut u8) {
+        // Actually a NO-OP, included for correctness
+        unsafe {
+            switchctx_ptr.cast::<SwitchCtx>().drop_in_place();
+        }
     }
 
     unsafe fn set_global_switchctx(switchctx_ptr: *mut u8) {
@@ -232,97 +443,126 @@ impl eva_kernel::port::Impl for PortabilityImpl {
 
     fn yield_now() {
         unsafe {
-            libc::kill(0, scheduler_tick_signum());
+            sys_kill(0, SCHEDULER_TICK_SIGNUM);
         }
     }
 
-    fn kprint_fmt(args: fmt::Arguments) {
-        kprint_fmt(args);
+    fn kwrite(data: &[u8]) -> usize {
+        unsafe { sys_write(0, data.as_ptr() as _, data.len()) }
+    }
+
+    fn kread(data: &mut [u8]) -> usize {
+        unsafe { sys_read(0, data.as_ptr() as _, data.len()) }
     }
 
     fn get_time() -> Duration {
         let mut time = unsafe { mem::zeroed() };
         unsafe {
-            libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time);
+            sys_clock_gettime(CLOCK_THREAD_CPUTIME_ID as _, &mut time);
         }
 
-        Duration::from_secs(time.tv_sec as _) + Duration::from_nanos(time.tv_nsec as _)
+        Duration::new(time.tv_sec as _, time.tv_nsec as _)
     }
 }
 
 eva_kernel::set_global_portability_impl!(PortabilityImpl);
 
-static mut OLD_SWITCHCTX: *mut libc::ucontext_t = ptr::null_mut();
-static mut SWITCHCTX: *mut libc::ucontext_t = ptr::null_mut();
-
-unsafe fn push_call(ucontext: *mut libc::ucontext_t, func: unsafe extern "C" fn()) {
-    // This is pretty much dark magic, we are modifying opaque data structures and injecting a fake return address to invoke a function before actually returning to the previous executing function.
-    unsafe {
-        let rip = (*ucontext).uc_mcontext.gregs[libc::REG_RIP as usize];
-        let rsp = (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize];
-
-        let rsp = rsp - 8;
-        (rsp as *mut i64).write_unaligned(rip);
-
-        (*ucontext).uc_mcontext.gregs[libc::REG_RIP as usize] = func as _;
-        (*ucontext).uc_mcontext.gregs[libc::REG_RSP as usize] = rsp;
-    }
-}
-
 #[unsafe(naked)]
-unsafe extern "C" fn swapcontext() {
+unsafe extern "C" fn swap_context() {
     naked_asm!(
-        "push rax",
-        "push rdi",
-        "push rsi",
-        "push rdx",
-        "push rcx",
-        "push r8",
-        "push r9",
-        "push r10",
-        "push r11",
-        "mov rdi, {old_switchctx}",
-        "mov rsi, {switchctx}",
-        "call {swapcontext}",
-        "pop r11",
-        "pop r10",
-        "pop r9",
-        "pop r8",
-        "pop rcx",
-        "pop rdx",
-        "pop rsi",
-        "pop rdi",
-        "pop rax",
-        "ret",
+        "
+        mov rdi, {old_switchctx}
+        mov rsi, {switchctx}
+
+        mov [rdi + 0], rax
+        mov [rdi + 8], rbx
+        mov [rdi + 16], rcx
+        mov [rdi + 24], rdx
+        mov [rdi + 32], rbp
+        mov [rdi + 40], rsp
+        mov [rdi + 48], r8
+        mov [rdi + 56], r9
+        mov [rdi + 64], r10
+        mov [rdi + 72], r11
+        mov [rdi + 80], r12
+        mov [rdi + 88], r13
+        mov [rdi + 96], r14
+        mov [rdi + 104], r15
+
+        fxsave [rdi + {fxsave_offset}]
+        xsave [rdi + {xsave_offset}]
+
+        mov rax, [rsi + 0]
+        mov rbx, [rsi + 8]
+        mov rcx, [rsi + 16]
+        mov rdx, [rsi + 24]
+        mov rbp, [rsi + 32]
+        mov rsp, [rsi + 40]
+        mov r8, [rsi + 48]
+        mov r9, [rsi + 56]
+        mov r10, [rsi + 64]
+        mov r11, [rsi + 72]
+        mov r12, [rsi + 80]
+        mov r13, [rsi + 88]
+        mov r14, [rsi + 96]
+        mov r15, [rsi + 104]
+
+        fxrstor [rsi + {fxsave_offset}]
+        xrstor [rsi + {xsave_offset}]
+        
+        pop rdi
+        pop rsi
+        popf
+        ret
+        ",
         old_switchctx = sym OLD_SWITCHCTX,
         switchctx = sym SWITCHCTX,
-        swapcontext = sym libc::swapcontext
+        fxsave_offset = const offset_of!(SwitchCtx, fxsave),
+        xsave_offset = const offset_of!(SwitchCtx, xsave)
     );
 }
 
-unsafe extern "C" fn scheduler_tick(
-    _sig: c_int,
-    _info: *mut libc::siginfo_t,
-    ucontext: *mut libc::ucontext_t,
-) {
+static mut OLD_SWITCHCTX: *mut SwitchCtx = ptr::null_mut();
+static mut SWITCHCTX: *mut SwitchCtx = ptr::null_mut();
+
+unsafe fn push_swap_context(ucontext: *mut ucontext) {
+    // This is pretty much dark magic, we are modifying opaque data structures and injecting a fake return address to invoke a function before actually returning to the previous executing function.
+    unsafe {
+        let rip = (*ucontext).uc_mcontext.rip;
+        let rsp = (*ucontext).uc_mcontext.rsp;
+        let rdi = (*ucontext).uc_mcontext.rdi;
+        let rsi = (*ucontext).uc_mcontext.rsi;
+        let eflags = (*ucontext).uc_mcontext.eflags;
+
+        let rsp = rsp as *mut u8;
+        let rsp = rsp.sub(size_of::<SwitchStack>());
+        rsp.cast::<SwitchStack>().write(SwitchStack {
+            rdi,
+            rsi,
+            eflags,
+            rip,
+        });
+
+        (*ucontext).uc_mcontext.rip = swap_context as *const () as _;
+        (*ucontext).uc_mcontext.rsp = rsp as _;
+    }
+}
+
+unsafe extern "C" fn scheduler_tick(_sig: c_int, _info: *mut siginfo, ucontext: *mut ucontext) {
     unsafe {
         let old_ctx = SWITCHCTX;
-        *SWITCHCTX = *ucontext;
         rt::tick();
 
         if old_ctx != SWITCHCTX {
             OLD_SWITCHCTX = old_ctx;
-            push_call(ucontext, swapcontext);
+            push_swap_context(ucontext);
         }
     }
 }
 
-unsafe extern "C" fn timer_tick(
-    _sig: c_int,
-    _info: *mut libc::siginfo_t,
-    _ucontext: *mut libc::ucontext_t,
-) {
+unsafe extern "C" fn timer_tick(_sig: c_int) {
+    // Trigger an immediate yield
     unsafe {
-        libc::kill(0, scheduler_tick_signum());
+        sys_kill(0, SCHEDULER_TICK_SIGNUM);
     }
 }

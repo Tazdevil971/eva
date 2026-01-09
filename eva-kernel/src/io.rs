@@ -1,4 +1,3 @@
-use core::ffi::CStr;
 use core::fmt::{self, Arguments};
 
 use crate::port::{self, Impl as _};
@@ -24,13 +23,6 @@ pub fn kprint_fmt(args: Arguments) {
     }
 
     let _ = fmt::Write::write_fmt(&mut KIo, args);
-}
-
-pub(crate) fn kputs(str: &CStr) {
-    // TODO(davide.mor): Switch to .display() once it gets stabilized
-    if let Ok(str) = str.to_str() {
-        kprint_fmt(format_args!("{str}"));
-    }
 }
 
 #[macro_export]

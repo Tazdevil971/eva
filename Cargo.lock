@@ -110,7 +110,7 @@ version = "0.1.0"
 name = "eva-sync-queue"
 version = "0.1.0"
 dependencies = [
- "eva-bsp-stm32f767",
+ "eva-bsp-linux",
  "eva-kernel",
 ]
 

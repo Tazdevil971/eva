@@ -15,7 +15,7 @@ use crate::rt::tls::LocalStore;
 use eva_abi::{Priority, ThreadId};
 use eva_utils::{linked_list, singly_linked_list};
 
-const THREAD_STACK_ALIGN: usize = 8;
+const THREAD_STACK_ALIGN: usize = 16;
 
 pub const THREAD_CANARY_VALUE: [u8; 16] = [
     0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad, 0xde, 0xad,
@@ -423,45 +423,5 @@ impl AtomicThreadPtr {
 
     pub fn store(&self, thread: Option<ThreadPtr>, order: Ordering) {
         self.0.store(Self::into_raw(thread), order);
-    }
-
-    pub fn swap(&self, thread: Option<ThreadPtr>, order: Ordering) -> Option<ThreadPtr> {
-        Self::from_raw(self.0.swap(Self::into_raw(thread), order))
-    }
-
-    pub fn compare_exchange(
-        &self,
-        current: Option<ThreadPtr>,
-        new: Option<ThreadPtr>,
-        success: Ordering,
-        failure: Ordering,
-    ) -> Result<Option<ThreadPtr>, Option<ThreadPtr>> {
-        self.0
-            .compare_exchange(
-                Self::into_raw(current),
-                Self::into_raw(new),
-                success,
-                failure,
-            )
-            .map(Self::from_raw)
-            .map_err(Self::from_raw)
-    }
-
-    pub fn compare_exchange_weak(
-        &self,
-        current: Option<ThreadPtr>,
-        new: Option<ThreadPtr>,
-        success: Ordering,
-        failure: Ordering,
-    ) -> Result<Option<ThreadPtr>, Option<ThreadPtr>> {
-        self.0
-            .compare_exchange_weak(
-                Self::into_raw(current),
-                Self::into_raw(new),
-                success,
-                failure,
-            )
-            .map(Self::from_raw)
-            .map_err(Self::from_raw)
     }
 }

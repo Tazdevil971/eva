@@ -9,11 +9,13 @@
 
 #define OK 0
 
-#define ALREADY_JOINING_ERROR -1
+#define NOT_JOINABLE_ERROR -1
 
 #define ALREADY_RUNNING_ERROR -2
 
-#define TLS_INVALID_KEY_ERROR -3
+#define INVALID_THREAD_ERROR -3
+
+#define INVALID_TLS_KEY_ERROR -4
 
 typedef struct Duration2 {
   uint64_t secs;
@@ -24,12 +26,11 @@ typedef void *Thread2;
 
 typedef int8_t Priority;
 
-typedef void (*ThreadFn)(void*);
+typedef uint32_t ThreadId2;
+#define ThreadId2_INVALID 0
 
 typedef uint32_t TlsKey2;
 #define TlsKey2_INVALID 0
-
-typedef void (*TlsDtor)(void*);
 
 typedef struct ALIGNED(8) Mutex2 {
   uint8_t _0[32];
@@ -41,7 +42,9 @@ typedef struct ALIGNED(8) Condvar2 {
 
 extern struct Duration2 eva_c_get_time(void);
 
-extern void eva_c_kputs(const char *str);
+extern uintptr_t eva_c_io_kwrite(const uint8_t *data, uintptr_t len);
+
+extern uintptr_t eva_c_io_kread(uint8_t *data, uintptr_t len);
 
 extern void *eva_c_alloc(uintptr_t size, uintptr_t align);
 
@@ -53,15 +56,25 @@ extern void eva_c_emu_free(void *ptr);
 
 extern Thread2 eva_c_rt_spawn(uintptr_t stack_size,
                               Priority priority,
-                              ThreadFn entry,
+                              void (*entry)(void*),
                               const char *name,
                               void *user);
 
+extern bool eva_c_rt_exists(Thread2 thread);
+
+extern bool eva_c_rt_exists_paused(Thread2 thread);
+
+extern int eva_c_rt_join(Thread2 thread);
+
 extern int eva_c_rt_join_unchecked(Thread2 thread);
 
-extern Priority eva_c_rt_get_priority(Thread2 thread);
+extern int eva_c_rt_detach(Thread2 thread);
+
+extern int eva_c_rt_detach_unchecked(Thread2 thread);
 
 extern Priority eva_c_rt_get_current_priority(void);
+
+extern ThreadId2 eva_c_rt_get_current_tid(void);
 
 extern void eva_c_rt_suspend_paused(void);
 
@@ -69,9 +82,13 @@ extern void eva_c_rt_suspend_and_yield(void);
 
 extern void eva_c_rt_suspend_and_yield_paused(void);
 
+extern int eva_c_rt_resume(Thread2 thread);
+
 extern int eva_c_rt_resume_unchecked(Thread2 thread);
 
-extern int eva_c_rt_resume_irq_unchecked(Thread2 thread);
+extern void eva_c_rt_resume_irq_unchecked(Thread2 thread);
+
+extern int eva_c_rt_resume_paused(Thread2 thread);
 
 extern int eva_c_rt_resume_paused_unchecked(Thread2 thread);
 
@@ -101,7 +118,7 @@ extern bool eva_c_rt_try_pause(void);
 
 extern bool eva_c_rt_try_unpause(void);
 
-extern TlsKey2 eva_c_rt_tls_key_create(TlsDtor dtor);
+extern TlsKey2 eva_c_rt_tls_key_create(void (*dtor)(void*));
 
 extern int eva_c_rt_tls_key_delete(TlsKey2 key);
 
