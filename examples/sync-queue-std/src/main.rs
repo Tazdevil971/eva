@@ -1,10 +1,10 @@
 #![feature(restricted_std)]
 
-extern crate eva_bsp_stm32f767;
+extern crate eva_bsp_linux;
 
 use std::collections::VecDeque;
-use std::ptr;
 use std::sync::{Condvar, Mutex};
+use std::thread;
 
 struct SyncQueue<T> {
     inner: Mutex<VecDeque<T>>,
@@ -55,32 +55,32 @@ static QUEUE: SyncQueue<u32> = SyncQueue::new();
 
 fn main() {
     // Spawn the two threads
-    let thread1 = std::thread::Builder::new()
-        .stack_size(4096 * 16)
+    let pusher = thread::Builder::new()
+        .stack_size(64 * 1024)
         .spawn(|| {
-            println!("Entering thread1!");
+            println!("Entering pusher!");
             for i in 0..100 {
                 QUEUE.push(i);
                 println!("Pushed 1 item!");
             }
-            println!("Exiting thread1!");
+            println!("Exiting pusher!");
         })
         .unwrap();
 
-    let thread2 = std::thread::Builder::new()
-        .stack_size(4096 * 16)
+    let popper = thread::Builder::new()
+        .stack_size(64 * 1024)
         .spawn(|| {
-            println!("Entering thread2!");
+            println!("Entering popper!");
             for i in 0..100 {
                 let item = QUEUE.pop();
                 assert_eq!(i, item);
                 println!("Popped: {}", item);
             }
-            println!("Exiting thread2!");
+            println!("Exiting popper!");
         })
         .unwrap();
 
-    thread1.join();
-    thread2.join();
-    println!("Exit");
+    pusher.join().unwrap();
+    popper.join().unwrap();
+    println!("Exiting main!");
 }

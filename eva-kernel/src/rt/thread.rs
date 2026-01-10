@@ -256,6 +256,7 @@ impl ThreadPtr {
         unsafe { self.0.as_ref() }
     }
 
+    #[allow(unused)]
     pub fn read_canary(self) -> [u8; 16] {
         // TODO: Why read volatile here? Is it really true that we must use volatile?
         unsafe { self.stack_base_ptr.cast::<[u8; 16]>().read_volatile() }

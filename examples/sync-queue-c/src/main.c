@@ -1,5 +1,12 @@
 #include <eva/abi.h>
 
+void kputs(const char *str) {
+    int len = 0;
+    while(str[len] != 0)
+        len += 1;
+    eva_c_io_kwrite((const uint8_t*)str, len);
+}
+
 typedef struct {
     int count;
     int tx_ptr;
@@ -58,42 +65,42 @@ int queue_pop(SyncQueue *queue) {
 void pusher(void *user) {
     SyncQueue *queue = (SyncQueue*)user;
     
-    eva_c_kputs("Entering pusher!\n");
+    kputs("Entering pusher!\n");
     for (int i = 0; i < 100; i++) {
-        eva_c_kputs("Pushing!\n");
+        kputs("Pushing!\n");
         queue_push(queue, i);
     }
-    eva_c_kputs("Exiting pusher!\n");
+    kputs("Exiting pusher!\n");
 }
 
 void popper(void *user) {
     SyncQueue *queue = (SyncQueue*)user;
     
-    eva_c_kputs("Entering popper!\n");
+    kputs("Entering popper!\n");
     for (int i = 0; i < 100; i++) {
         int val = queue_pop(queue);
         if (val != i) {
-            eva_c_kputs("Invalid!\n");
+            kputs("Invalid!\n");
         } else {
-            eva_c_kputs("Valid!\n");
+            kputs("Valid!\n");
         }
     }
-    eva_c_kputs("Exiting popper!\n");
+    kputs("Exiting popper!\n");
 }
 
-void eva_kmain() {
+int main() {
     // Emulate malloc on top of the native EVA allocator
     SyncQueue *queue = eva_c_emu_malloc(sizeof(SyncQueue));
     queue_init(queue);
 
-    Thread2 pusher_thread = eva_c_rt_spawn(4096, 0, pusher, "Pusher", queue);
-    Thread2 popper_thread = eva_c_rt_spawn(4096, 0, popper, "Popper", queue);
+    Thread2 pusher_thread = eva_c_rt_spawn(64 * 1024, 0, pusher, "Pusher", queue);
+    Thread2 popper_thread = eva_c_rt_spawn(64 * 1024, 0, popper, "Popper", queue);
 
-    eva_c_rt_join_unchecked(pusher_thread);
-    eva_c_rt_join_unchecked(popper_thread);
-
-    eva_c_kputs("Finish!\n");
+    eva_c_rt_join(pusher_thread);
+    eva_c_rt_join(popper_thread);
 
     eva_c_emu_free(queue);
-    eva_c_kputs("Returning...\n");
+    kputs("Exiting main!\n");
+
+    return 0;
 }

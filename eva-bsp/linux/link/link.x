@@ -25,6 +25,12 @@ SECTIONS
         *(.rodata.*)
     } :rom
 
+    .eh_frame_hdr : { 
+        __GNU_EH_FRAME_HDR = .;
+        KEEP(*(.eh_frame_hdr)) 
+    } :rom
+    .eh_frame : { KEEP(*(.eh_frame)) } :rom
+
     /* Align to a sane boundary */
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 

@@ -4,7 +4,7 @@ use core::arch::naked_asm;
 use core::fmt;
 use core::mem::size_of;
 use core::ptr::{self, addr_of_mut};
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use core::time::Duration;
 
 use eva_kernel::{allocator, kprintln, port, rt};
@@ -159,72 +159,6 @@ unsafe extern "C" fn init_stage0() {
     }
 }
 
-mod interrupt {
-    use core::arch::asm;
-    use core::sync::atomic::{Ordering, compiler_fence};
-
-    pub fn disable() {
-        unsafe {
-            asm!("cpsid i", options(nomem, nostack, preserves_flags));
-        }
-
-        // Ensure no subsequent memory accesses are reordered to before interrupts are disabled.
-        compiler_fence(Ordering::SeqCst);
-    }
-
-    pub unsafe fn enable() {
-        // Ensure no preceeding memory accesses are reordered to after interrupts are enabled.
-        compiler_fence(Ordering::SeqCst);
-
-        unsafe {
-            asm!("cpsie i", options(nomem, nostack, preserves_flags));
-        }
-    }
-
-    pub unsafe fn free<F, R>(f: F) -> R
-    where
-        F: FnOnce() -> R,
-    {
-        let primask = unsafe { eva_pac::primask::read().primask() };
-
-        struct EnableGuard;
-
-        impl Drop for EnableGuard {
-            fn drop(&mut self) {
-                unsafe {
-                    enable();
-                }
-            }
-        }
-
-        disable();
-        let _guard = if !primask { Some(EnableGuard) } else { None };
-
-        f()
-    }
-
-    struct Cs;
-
-    unsafe impl critical_section::Impl for Cs {
-        unsafe fn acquire() -> bool {
-            let primask = unsafe { eva_pac::primask::read().primask() };
-            disable();
-
-            primask
-        }
-
-        unsafe fn release(restore_state: bool) {
-            if !restore_state {
-                unsafe {
-                    enable();
-                }
-            }
-        }
-    }
-
-    critical_section::set_impl!(Cs);
-}
-
 unsafe extern "C" fn init_stage1() {
     rtt_target::rtt_init! {
         up: {
@@ -269,7 +203,7 @@ unsafe extern "C" fn init_stage1() {
 
     {
         // Spawn first thread
-        rt::spawn(4096, 0, init_stage2, c"Main", ptr::null_mut());
+        rt::spawn(64 * 1024, 0, init_stage2, c"Main", ptr::null_mut());
 
         unsafe {
             // Launch the scheduler
@@ -311,16 +245,66 @@ extern "C" fn init_stage2(_: *mut ()) {
     eva_kernel::kmain::invoke();
 }
 
-#[macro_export]
-macro_rules! eva_main {
-    ($name:expr) => {
-        #[unsafe(no_mangle)]
-        unsafe extern "C" fn __eva_start() {
-            const MAIN: fn() = $name;
-            (MAIN)();
-        }
-    };
+pub fn irq_disable() {
+    unsafe {
+        asm!("cpsid i", options(nomem, nostack, preserves_flags));
+    }
+
+    // Ensure no subsequent memory accesses are reordered to before interrupts are disabled.
+    compiler_fence(Ordering::SeqCst);
 }
+
+pub unsafe fn irq_enable() {
+    // Ensure no preceding memory accesses are reordered to after interrupts are enabled.
+    compiler_fence(Ordering::SeqCst);
+
+    unsafe {
+        asm!("cpsie i", options(nomem, nostack, preserves_flags));
+    }
+}
+
+pub unsafe fn irq_free<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let primask = unsafe { eva_pac::primask::read().primask() };
+
+    struct EnableGuard;
+
+    impl Drop for EnableGuard {
+        fn drop(&mut self) {
+            unsafe {
+                irq_enable();
+            }
+        }
+    }
+
+    irq_disable();
+    let _guard = if !primask { Some(EnableGuard) } else { None };
+
+    f()
+}
+
+struct Cs;
+
+unsafe impl critical_section::Impl for Cs {
+    unsafe fn acquire() -> bool {
+        let primask = unsafe { eva_pac::primask::read().primask() };
+        disable();
+
+        primask
+    }
+
+    unsafe fn release(restore_state: bool) {
+        if !restore_state {
+            unsafe {
+                enable();
+            }
+        }
+    }
+}
+
+critical_section::set_impl!(Cs);
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn NMI() {
@@ -450,13 +434,13 @@ impl port::Impl for PortabilityImpl {
                 .icsr()
                 .write(eva_pac::scb::IcsrBits::default().set_pendsvset(true));
         }
-        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::Acquire);
+        compiler_fence(Ordering::Acquire);
     }
 
     fn kwrite(data: &[u8]) -> usize {
         unsafe {
             // SAFETY: We are not doing any yielding
-            interrupt::free(|| {
+            irq_free(|| {
                 let mut channel = {
                     // SAFETY: We are running in an interrupt free section!
                     rtt_target::UpChannel::conjure(0).unwrap()
@@ -471,7 +455,7 @@ impl port::Impl for PortabilityImpl {
         0
         // unsafe {
         //     // SAFETY: We are not doing any yielding
-        //     interrupt::free(|| {
+        //     irq_free(|| {
         //         let mut channel = {
         //             // SAFETY: We are running in an interrupt free section!
         //             rtt_target::DownChannel::new(0).unwrap()

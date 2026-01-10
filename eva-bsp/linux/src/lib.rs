@@ -55,12 +55,6 @@ unsafe extern "C" fn init_stage1() {
             unsafe static mut __heap_end: u8;
         }
 
-        kprintln!(
-            "heap {:?} {:?}",
-            addr_of_mut!(__heap_start),
-            addr_of_mut!(__heap_end)
-        );
-
         unsafe {
             allocator::init(addr_of_mut!(__heap_start), addr_of_mut!(__heap_end));
         }
@@ -122,7 +116,7 @@ unsafe extern "C" fn init_stage1() {
 
     {
         // Spawn first thread
-        rt::spawn(1024 * 256, 0, init_stage2, c"Main", ptr::null_mut());
+        rt::spawn(64 * 1024, 0, init_stage2, c"Main", ptr::null_mut());
 
         unsafe {
             // Launch the scheduler

@@ -8,9 +8,9 @@ members = [
     "eva-bsp/stm32f767",
     "eva-bsp/linux",
     "examples/hello-world",
-    "examples/hello-world-c",
     "examples/sync-queue",
     "examples/sync-queue-std",
+    "examples/sync-queue-c",
 ]
 
 [workspace.dependencies]

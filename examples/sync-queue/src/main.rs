@@ -69,32 +69,32 @@ static QUEUE: SyncQueue<u32> = SyncQueue::new();
 fn main() {
     // Spawn the two threads
 
-    let thread1 = rt::spawn(4096 * 16, 0, thread1, c"Thread1", ptr::null_mut()).unwrap();
-    let thread2 = rt::spawn(4096 * 16, 0, thread2, c"Thread2", ptr::null_mut()).unwrap();
+    let pusher = rt::spawn(64 * 1024, 0, pusher, c"Pusher", ptr::null_mut()).unwrap();
+    let popper = rt::spawn(64 * 1024, 0, popper, c"Popper", ptr::null_mut()).unwrap();
 
-    rt::join(thread1).unwrap();
-    rt::join(thread2).unwrap();
+    rt::join(pusher).unwrap();
+    rt::join(popper).unwrap();
 
     kprintln!("Exiting main!");
 }
 
 eva_kernel::kmain!(main);
 
-extern "C" fn thread1(_user1: *mut ()) {
-    kprintln!("Entering thread1!");
+extern "C" fn pusher(_user: *mut ()) {
+    kprintln!("Entering pusher!");
     for i in 0..100 {
         QUEUE.push(i);
         kprintln!("Pushed 1 item!");
     }
-    kprintln!("Exiting thread1!");
+    kprintln!("Exiting pusher!");
 }
 
-extern "C" fn thread2(_user1: *mut ()) {
-    kprintln!("Entering thread2!");
+extern "C" fn popper(_user: *mut ()) {
+    kprintln!("Entering popper!");
     for i in 0..100 {
         let item = QUEUE.pop();
         assert_eq!(i, item);
         kprintln!("Popped: {}", item);
     }
-    kprintln!("Exiting thread2!");
+    kprintln!("Exiting popper!");
 }

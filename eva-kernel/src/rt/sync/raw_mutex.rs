@@ -21,6 +21,13 @@ assert_zeroable!(RawMutex);
 assert_cast_ref_compatible!(eva_abi::Mutex2 => RawMutex);
 
 impl RawMutex {
+    pub const fn new() -> Self {
+        Self {
+            locked: AtomicBool::new(false),
+            wait_list: PriorityWakeList::new(),
+        }
+    }
+
     pub fn lock_paused(&self, token: PauseToken) {
         // This is required because we could have a context switch just before the pause that releases the mutex
         if self.try_lock() {
@@ -117,10 +124,7 @@ impl RawMutex {
 unsafe impl lock_api::RawMutex for RawMutex {
     type GuardMarker = lock_api::GuardSend;
 
-    const INIT: Self = Self {
-        locked: AtomicBool::new(false),
-        wait_list: PriorityWakeList::new(),
-    };
+    const INIT: Self = Self::new();
 
     fn lock(&self) {
         self.lock()

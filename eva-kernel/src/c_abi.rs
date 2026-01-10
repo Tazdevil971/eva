@@ -293,10 +293,9 @@ unsafe fn to_rt_mutex<'a>(mutex: *mut Mutex2) -> &'a RawMutex {
     }
 }
 
-unsafe fn to_rt_condvar<'a>(mutex: *mut Condvar2) -> &'a RawCondvar {
+unsafe fn to_rt_condvar<'a>(cvar: *mut Condvar2) -> &'a RawCondvar {
     unsafe {
-        mutex
-            .cast::<RawCondvar>()
+        cvar.cast::<RawCondvar>()
             .as_ref()
             .expect("invalid ptr passed to C ABI")
     }
