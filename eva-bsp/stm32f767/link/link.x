@@ -61,18 +61,18 @@ SECTIONS
 
     __irq_stack_size = 64K;
 
-    .heap (NOLOAD)
+    .heap (NOLOAD) :
     {
         __heap_start = .;
-        . += LENGTH(SRAM) - __irq_stack_size;
+        . = ORIGIN(SRAM) + LENGTH(SRAM) - __irq_stack_size;
         __heap_end = .;
     } > SRAM
 
-    __heap_size = __heap_end - __heap_start;
-
-    .irq_stack (NOLOAD) : ALIGN(8)
+    .irq_stack (NOLOAD) :
     {
+        __irq_stack_bottom = .;
         . += __irq_stack_size;
         __irq_stack_top = .;
-    }
+    } > SRAM
+
 }

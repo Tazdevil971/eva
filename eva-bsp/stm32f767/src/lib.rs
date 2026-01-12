@@ -1,6 +1,6 @@
 #![no_std]
 use core::alloc::Layout;
-use core::arch::naked_asm;
+use core::arch::{asm, naked_asm};
 use core::fmt;
 use core::mem::size_of;
 use core::ptr::{self, addr_of_mut};
@@ -290,7 +290,7 @@ struct Cs;
 unsafe impl critical_section::Impl for Cs {
     unsafe fn acquire() -> bool {
         let primask = unsafe { eva_pac::primask::read().primask() };
-        disable();
+        irq_disable();
 
         primask
     }
@@ -298,7 +298,7 @@ unsafe impl critical_section::Impl for Cs {
     unsafe fn release(restore_state: bool) {
         if !restore_state {
             unsafe {
-                enable();
+                irq_enable();
             }
         }
     }
