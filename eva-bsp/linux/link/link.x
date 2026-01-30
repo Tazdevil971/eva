@@ -1,6 +1,7 @@
 PHDRS
 {
-    rom PT_LOAD FLAGS(5);
+    headers PT_PHDR PHDRS;
+    rom PT_LOAD FILEHDR FLAGS(5);
     ram PT_LOAD FLAGS(6);
 }
 
@@ -10,9 +11,11 @@ ENTRY(_start)
 SECTIONS
 {
     . = 0x400000;
+    __executable_start = .;
+    . += SIZEOF_HEADERS;
+    
     .text : 
     {
-        __executable_start = .;
         __stext = .;
         *(.text)
         *(.text.*)
@@ -25,11 +28,11 @@ SECTIONS
         *(.rodata.*)
     } :rom
 
-    .eh_frame_hdr : { 
-        __GNU_EH_FRAME_HDR = .;
-        KEEP(*(.eh_frame_hdr)) 
+    .eh_frame : ALIGN(8) { 
+        __eh_frame = .;
+        KEEP (*(.eh_frame)) 
+        *(.eh_frame.*) 
     } :rom
-    .eh_frame : { KEEP(*(.eh_frame)) } :rom
 
     /* Align to a sane boundary */
     . = ALIGN(CONSTANT(MAXPAGESIZE));

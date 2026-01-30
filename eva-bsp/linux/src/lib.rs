@@ -2,15 +2,15 @@
 use core::alloc::Layout;
 use core::arch::{asm, naked_asm};
 use core::ffi::{c_int, c_ulong, c_void};
-use core::mem::{self, offset_of, size_of};
+use core::mem::{self, offset_of};
 use core::ptr::{self, addr_of_mut};
 use core::time::Duration;
 
 use eva_kernel::{allocator, kprintln, port, rt};
 use linux_raw_sys::general::{
-    __kernel_clockid_t, __kernel_pid_t, __kernel_timer_t, CLOCK_THREAD_CPUTIME_ID, SA_ONSTACK,
-    SA_RESTART, SA_RESTORER, SA_SIGINFO, SIGEV_SIGNAL, SIGRTMIN, itimerspec, kernel_sigaction,
-    kernel_sigset_t, sigevent, siginfo, stack_t, timespec, ucontext,
+    __kernel_clockid_t, __kernel_pid_t, __kernel_timer_t, _fpstate_64, CLOCK_THREAD_CPUTIME_ID,
+    SA_ONSTACK, SA_RESTART, SA_RESTORER, SA_SIGINFO, SIGEV_SIGNAL, SIGRTMIN, itimerspec,
+    kernel_sigaction, kernel_sigset_t, sigevent, siginfo, stack_t, timespec, ucontext,
 };
 
 #[cfg(not(target_arch = "x86_64"))]
@@ -28,19 +28,25 @@ unsafe extern "C" fn _start() {
         "
         call {init_stage1}
 
-        mov rsi, {switchctx}
-        mov rcx, [rsi + 16]
-        mov rdx, [rsi + 24]
-        mov rbp, [rsi + 32]
-        mov rsp, [rsi + 40]
-
-        pop rdi
-        pop rsi
-        popf
-        ret
+        mov rax, {switchctx}
+        mov rdi, [rax + {offset_rdi}]
+        mov rsi, [rax + {offset_rsi}]
+        mov rdx, [rax + {offset_rdx}]
+        mov rcx, [rax + {offset_rcx}]
+        mov rsp, [rax + {offset_rsp}]
+        mov rbp, [rax + {offset_rbp}]
+        mov rax, [rax + {offset_rip}]
+        jmp rax
         ",
         init_stage1 = sym init_stage1,
-        switchctx = sym SWITCHCTX
+        switchctx = sym SWITCHCTX,
+        offset_rdi = const offset_of!(SwitchCtx, rdi),
+        offset_rsi = const offset_of!(SwitchCtx, rsi),
+        offset_rdx = const offset_of!(SwitchCtx, rdx),
+        offset_rcx = const offset_of!(SwitchCtx, rcx),
+        offset_rsp = const offset_of!(SwitchCtx, rsp),
+        offset_rbp = const offset_of!(SwitchCtx, rbp),
+        offset_rip = const offset_of!(SwitchCtx, rip)
     );
 }
 
@@ -335,33 +341,20 @@ unsafe fn sys_clock_gettime(clockid: __kernel_clockid_t, tp: *mut timespec) -> c
     }
 }
 
-#[repr(C)]
-struct SwitchStack {
-    rdi: u64,
-    rsi: u64,
-    eflags: u64,
-    rip: u64,
-}
-
 const DEFAULT_RFLAGS: u64 = 0x202;
 
 #[derive(Debug)]
 #[repr(C, align(16))]
 struct FxSave([u8; 512]);
 
-#[derive(Debug)]
-#[repr(C, align(64))]
-struct XSave([u8; 1024]);
+// Check that _fpstate_64 is actually containable in FxSave
+const _: () = {
+    assert!(mem::size_of::<FxSave>() >= mem::size_of::<_fpstate_64>());
+};
 
 #[repr(C)]
 #[derive(Debug)]
 struct SwitchCtx {
-    rax: u64,
-    rbx: u64,
-    rcx: u64,
-    rdx: u64,
-    rbp: u64,
-    rsp: u64,
     r8: u64,
     r9: u64,
     r10: u64,
@@ -370,8 +363,108 @@ struct SwitchCtx {
     r13: u64,
     r14: u64,
     r15: u64,
+    rdi: u64,
+    rsi: u64,
+    rbp: u64,
+    rbx: u64,
+    rdx: u64,
+    rax: u64,
+    rcx: u64,
+    rsp: u64,
+    rip: u64,
+    eflags: u64,
     fxsave: FxSave,
-    xsave: XSave,
+}
+
+impl SwitchCtx {
+    pub fn init(
+        stack_ptr: *mut u8,
+        entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
+        arg1: *mut (),
+        arg2: *mut (),
+        arg3: *mut (),
+        arg4: *mut (),
+    ) -> Self {
+        Self {
+            r8: 0,
+            r9: 0,
+            r10: 0,
+            r11: 0,
+            r12: 0,
+            r13: 0,
+            r14: 0,
+            r15: 0,
+            rdi: arg1 as _,
+            rsi: arg2 as _,
+            rbp: stack_ptr as _,
+            rbx: 0,
+            rdx: arg3 as _,
+            rax: 0,
+            rcx: arg4 as _,
+            rsp: stack_ptr as _,
+            rip: entry as _,
+            eflags: DEFAULT_RFLAGS,
+            fxsave: FxSave([0; 512]),
+        }
+    }
+
+    pub unsafe fn save_from(&mut self, ucontext: *mut ucontext) {
+        unsafe {
+            self.r8 = (*ucontext).uc_mcontext.r8;
+            self.r9 = (*ucontext).uc_mcontext.r9;
+            self.r10 = (*ucontext).uc_mcontext.r10;
+            self.r11 = (*ucontext).uc_mcontext.r11;
+            self.r12 = (*ucontext).uc_mcontext.r12;
+            self.r13 = (*ucontext).uc_mcontext.r13;
+            self.r14 = (*ucontext).uc_mcontext.r14;
+            self.r15 = (*ucontext).uc_mcontext.r15;
+            self.rdi = (*ucontext).uc_mcontext.rdi;
+            self.rsi = (*ucontext).uc_mcontext.rsi;
+            self.rbp = (*ucontext).uc_mcontext.rbp;
+            self.rbx = (*ucontext).uc_mcontext.rbx;
+            self.rdx = (*ucontext).uc_mcontext.rdx;
+            self.rax = (*ucontext).uc_mcontext.rax;
+            self.rcx = (*ucontext).uc_mcontext.rcx;
+            self.rsp = (*ucontext).uc_mcontext.rsp;
+            self.rip = (*ucontext).uc_mcontext.rip;
+            self.eflags = (*ucontext).uc_mcontext.eflags;
+
+            ptr::copy_nonoverlapping(
+                (*ucontext).uc_mcontext.fpstate as *const u8,
+                self.fxsave.0.as_mut_ptr(),
+                mem::size_of::<_fpstate_64>(),
+            );
+        }
+    }
+
+    pub unsafe fn restore_to(&self, ucontext: *mut ucontext) {
+        unsafe {
+            (*ucontext).uc_mcontext.r8 = self.r8;
+            (*ucontext).uc_mcontext.r9 = self.r9;
+            (*ucontext).uc_mcontext.r10 = self.r10;
+            (*ucontext).uc_mcontext.r11 = self.r11;
+            (*ucontext).uc_mcontext.r12 = self.r12;
+            (*ucontext).uc_mcontext.r13 = self.r13;
+            (*ucontext).uc_mcontext.r14 = self.r14;
+            (*ucontext).uc_mcontext.r15 = self.r15;
+            (*ucontext).uc_mcontext.rdi = self.rdi;
+            (*ucontext).uc_mcontext.rsi = self.rsi;
+            (*ucontext).uc_mcontext.rbp = self.rbp;
+            (*ucontext).uc_mcontext.rbx = self.rbx;
+            (*ucontext).uc_mcontext.rdx = self.rdx;
+            (*ucontext).uc_mcontext.rax = self.rax;
+            (*ucontext).uc_mcontext.rcx = self.rcx;
+            (*ucontext).uc_mcontext.rsp = self.rsp;
+            (*ucontext).uc_mcontext.rip = self.rip;
+            (*ucontext).uc_mcontext.eflags = self.eflags;
+
+            ptr::copy_nonoverlapping(
+                self.fxsave.0.as_ptr(),
+                (*ucontext).uc_mcontext.fpstate as *mut u8,
+                mem::size_of::<_fpstate_64>(),
+            );
+        }
+    }
 }
 
 struct PortabilityImpl;
@@ -392,33 +485,13 @@ impl port::Impl for PortabilityImpl {
         arg4: *mut (),
     ) {
         unsafe {
-            let stack_ptr = stack_ptr.sub(size_of::<SwitchStack>()).sub(8);
+            stack_ptr.cast::<u64>().write(u64::MAX);
+            // Intentionally misalign the stack, this is what x64 expects on function enter
+            let stack_ptr = stack_ptr.sub(8);
 
-            stack_ptr.cast::<SwitchStack>().write(SwitchStack {
-                rdi: arg1 as _,
-                rsi: arg2 as _,
-                eflags: DEFAULT_RFLAGS,
-                rip: entry as _,
-            });
-
-            switchctx_ptr.cast::<SwitchCtx>().write(SwitchCtx {
-                rax: 0,
-                rbx: 0,
-                rcx: arg4 as _,
-                rdx: arg3 as _,
-                rbp: stack_ptr as _,
-                rsp: stack_ptr as _,
-                r8: 0,
-                r9: 0,
-                r10: 0,
-                r11: 0,
-                r12: 0,
-                r13: 0,
-                r14: 0,
-                r15: 0,
-                fxsave: FxSave([0; 512]),
-                xsave: XSave([0; 1024]),
-            })
+            switchctx_ptr
+                .cast::<SwitchCtx>()
+                .write(SwitchCtx::init(stack_ptr, entry, arg1, arg2, arg3, arg4))
         }
     }
 
@@ -461,86 +534,7 @@ impl port::Impl for PortabilityImpl {
 
 eva_kernel::set_global_portability_impl!(PortabilityImpl);
 
-#[unsafe(naked)]
-unsafe extern "C" fn swap_context() {
-    naked_asm!(
-        "
-        mov rdi, {old_switchctx}
-        mov rsi, {switchctx}
-
-        mov [rdi + 0], rax
-        mov [rdi + 8], rbx
-        mov [rdi + 16], rcx
-        mov [rdi + 24], rdx
-        mov [rdi + 32], rbp
-        mov [rdi + 40], rsp
-        mov [rdi + 48], r8
-        mov [rdi + 56], r9
-        mov [rdi + 64], r10
-        mov [rdi + 72], r11
-        mov [rdi + 80], r12
-        mov [rdi + 88], r13
-        mov [rdi + 96], r14
-        mov [rdi + 104], r15
-
-        fxsave [rdi + {fxsave_offset}]
-        xsave [rdi + {xsave_offset}]
-
-        mov rax, [rsi + 0]
-        mov rbx, [rsi + 8]
-        mov rcx, [rsi + 16]
-        mov rdx, [rsi + 24]
-        mov rbp, [rsi + 32]
-        mov rsp, [rsi + 40]
-        mov r8, [rsi + 48]
-        mov r9, [rsi + 56]
-        mov r10, [rsi + 64]
-        mov r11, [rsi + 72]
-        mov r12, [rsi + 80]
-        mov r13, [rsi + 88]
-        mov r14, [rsi + 96]
-        mov r15, [rsi + 104]
-
-        fxrstor [rsi + {fxsave_offset}]
-        xrstor [rsi + {xsave_offset}]
-        
-        pop rdi
-        pop rsi
-        popf
-        ret
-        ",
-        old_switchctx = sym OLD_SWITCHCTX,
-        switchctx = sym SWITCHCTX,
-        fxsave_offset = const offset_of!(SwitchCtx, fxsave),
-        xsave_offset = const offset_of!(SwitchCtx, xsave)
-    );
-}
-
-static mut OLD_SWITCHCTX: *mut SwitchCtx = ptr::null_mut();
 static mut SWITCHCTX: *mut SwitchCtx = ptr::null_mut();
-
-unsafe fn push_swap_context(ucontext: *mut ucontext) {
-    // This is pretty much dark magic, we are modifying opaque data structures and injecting a fake return address to invoke a function before actually returning to the previous executing function.
-    unsafe {
-        let rip = (*ucontext).uc_mcontext.rip;
-        let rsp = (*ucontext).uc_mcontext.rsp;
-        let rdi = (*ucontext).uc_mcontext.rdi;
-        let rsi = (*ucontext).uc_mcontext.rsi;
-        let eflags = (*ucontext).uc_mcontext.eflags;
-
-        let rsp = rsp as *mut u8;
-        let rsp = rsp.sub(size_of::<SwitchStack>());
-        rsp.cast::<SwitchStack>().write(SwitchStack {
-            rdi,
-            rsi,
-            eflags,
-            rip,
-        });
-
-        (*ucontext).uc_mcontext.rip = swap_context as *const () as _;
-        (*ucontext).uc_mcontext.rsp = rsp as _;
-    }
-}
 
 unsafe extern "C" fn scheduler_tick(_sig: c_int, _info: *mut siginfo, ucontext: *mut ucontext) {
     unsafe {
@@ -548,8 +542,8 @@ unsafe extern "C" fn scheduler_tick(_sig: c_int, _info: *mut siginfo, ucontext: 
         rt::tick();
 
         if old_ctx != SWITCHCTX {
-            OLD_SWITCHCTX = old_ctx;
-            push_swap_context(ucontext);
+            (*old_ctx).save_from(ucontext);
+            (*SWITCHCTX).restore_to(ucontext);
         }
     }
 }
