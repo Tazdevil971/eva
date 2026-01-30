@@ -244,6 +244,16 @@ unsafe extern "C" fn eva_c_rt_is_paused() -> bool {
 }
 
 #[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_pause() {
+    crate::rt::pause::pause()
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn eva_c_rt_unpause() {
+    unsafe { crate::rt::pause::unpause() }
+}
+
+#[unsafe(no_mangle)]
 unsafe extern "C" fn eva_c_rt_try_pause() -> bool {
     crate::rt::pause::try_pause()
 }

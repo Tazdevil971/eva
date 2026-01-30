@@ -114,6 +114,10 @@ extern void eva_c_rt_abort(void);
 
 extern bool eva_c_rt_is_paused(void);
 
+extern void eva_c_rt_pause(void);
+
+extern void eva_c_rt_unpause(void);
+
 extern bool eva_c_rt_try_pause(void);
 
 extern bool eva_c_rt_try_unpause(void);

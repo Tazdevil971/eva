@@ -287,6 +287,8 @@ unsafe extern "Rust" {
     // Scheduler functions
     pub unsafe fn eva_rt_abort();
     pub unsafe fn eva_rt_is_paused() -> bool;
+    pub unsafe fn eva_rt_pause();
+    pub unsafe fn eva_rt_unpause();
     pub unsafe fn eva_rt_try_pause() -> bool;
     pub unsafe fn eva_rt_try_unpause() -> bool;
 
@@ -377,6 +379,8 @@ unsafe extern "C" {
     // Scheduler functions
     pub unsafe fn eva_c_rt_abort();
     pub unsafe fn eva_c_rt_is_paused() -> bool;
+    pub unsafe fn eva_c_rt_pause();
+    pub unsafe fn eva_c_rt_unpause();
     pub unsafe fn eva_c_rt_try_pause() -> bool;
     pub unsafe fn eva_c_rt_try_unpause() -> bool;
 
