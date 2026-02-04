@@ -120,20 +120,6 @@ unsafe extern "C" fn init_stage1() {
         }
     }
 
-    {
-        // Spawn first thread
-        rt::spawn(64 * 1024, 0, init_stage2, c"Main", ptr::null_mut());
-
-        unsafe {
-            // Launch the scheduler
-            rt::init();
-        }
-    }
-}
-
-extern "C" fn init_stage2(_: *mut ()) {
-    // Yay this is the first thread!
-
     // Initialize the preemption timer
     {
         unsafe {
@@ -159,6 +145,20 @@ extern "C" fn init_stage2(_: *mut ()) {
             sys_timer_settime(GLOBAL_TIMER, 0, &new, ptr::null_mut());
         }
     }
+
+    {
+        // Spawn first thread
+        rt::spawn(64 * 1024, 0, init_stage2, c"Main", ptr::null_mut());
+
+        unsafe {
+            // Launch the scheduler
+            rt::init();
+        }
+    }
+}
+
+extern "C" fn init_stage2(_: *mut ()) {
+    // Yay this is the first thread!
 
     kprintln!("-> EVA scheduler [online]");
     kprintln!("Pivoting control to user code, good luck!");
@@ -377,6 +377,30 @@ struct SwitchCtx {
 }
 
 impl SwitchCtx {
+    pub const fn null() -> Self {
+        Self {
+            r8: 0,
+            r9: 0,
+            r10: 0,
+            r11: 0,
+            r12: 0,
+            r13: 0,
+            r14: 0,
+            r15: 0,
+            rdi: 0,
+            rsi: 0,
+            rbp: 0,
+            rbx: 0,
+            rdx: 0,
+            rax: 0,
+            rcx: 0,
+            rsp: 0,
+            rip: 0,
+            eflags: DEFAULT_RFLAGS,
+            fxsave: FxSave([0; 512]),
+        }
+    }
+
     pub fn init(
         stack_ptr: *mut u8,
         entry: unsafe extern "C" fn(*mut (), *mut (), *mut (), *mut ()) -> !,
@@ -534,7 +558,8 @@ impl port::Impl for PortabilityImpl {
 
 eva_kernel::set_global_portability_impl!(PortabilityImpl);
 
-static mut SWITCHCTX: *mut SwitchCtx = ptr::null_mut();
+static mut NULL_SWITCHCTX: SwitchCtx = SwitchCtx::null();
+static mut SWITCHCTX: *mut SwitchCtx = addr_of_mut!(NULL_SWITCHCTX);
 
 unsafe extern "C" fn scheduler_tick(_sig: c_int, _info: *mut siginfo, ucontext: *mut ucontext) {
     unsafe {

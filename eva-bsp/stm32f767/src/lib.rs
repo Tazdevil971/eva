@@ -201,21 +201,7 @@ unsafe extern "C" fn init_stage1() {
         }
     }
 
-    {
-        // Spawn first thread
-        rt::spawn(64 * 1024, 0, init_stage2, c"Main", ptr::null_mut());
-
-        unsafe {
-            // Launch the scheduler
-            rt::init();
-        }
-    }
-}
-
-extern "C" fn init_stage2(_: *mut ()) {
-    // Yay this is the first thread!
-
-    // Initialize preemption now, as the kernel is fully online
+    // Initialize preemption, as the kernel is offline
     {
         unsafe {
             // Retrieve the reload value for tenms
@@ -237,6 +223,20 @@ extern "C" fn init_stage2(_: *mut ()) {
             });
         }
     }
+
+    {
+        // Spawn first thread
+        rt::spawn(64 * 1024, 0, init_stage2, c"Main", ptr::null_mut());
+
+        unsafe {
+            // Launch the scheduler
+            rt::init();
+        }
+    }
+}
+
+extern "C" fn init_stage2(_: *mut ()) {
+    // Yay this is the first thread!
 
     kprintln!("-> EVA scheduler [online]");
     kprintln!("Pivoting control to user code, good luck!");
@@ -424,7 +424,7 @@ impl port::Impl for PortabilityImpl {
 
     unsafe fn set_global_switchctx(switchctx_ptr: *mut u8) {
         unsafe {
-            SWITCHCTX = switchctx_ptr;
+            SWITCHCTX = switchctx_ptr as _;
         }
     }
 
@@ -474,7 +474,20 @@ impl port::Impl for PortabilityImpl {
 
 eva_kernel::set_global_portability_impl!(PortabilityImpl);
 
-static mut SWITCHCTX: *mut u8 = ptr::null_mut();
+static mut NULL_SWITCHCTX: SwitchCtx = SwitchCtx {
+    sp: 0,
+    r4: 0,
+    r5: 0,
+    r6: 0,
+    r7: 0,
+    r8: 0,
+    r9: 0,
+    r10: 0,
+    r11: 0,
+    handler_lr: 0,
+};
+
+static mut SWITCHCTX: *mut SwitchCtx = addr_of_mut!(NULL_SWITCHCTX);
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
