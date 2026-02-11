@@ -24,10 +24,7 @@ impl SchedQueue {
         if priority == super::IDLE_PRIORITY {
             self.idle = Some(thread);
         } else {
-            let list = self
-                .lists
-                .get_mut(priority as usize)
-                .expect("invalid priority found");
+            let list = unsafe { self.lists.get_unchecked_mut(priority as usize) };
 
             list.push_back(thread);
 
@@ -37,9 +34,9 @@ impl SchedQueue {
 
     pub fn pop_thread(&mut self) -> Option<ThreadPtr> {
         if let Some(highest) = self.ready.highest() {
-            let list = self.lists.get_mut(highest).expect("invalid ready queue");
+            let list = unsafe { self.lists.get_unchecked_mut(highest) };
 
-            let next = list.pop_front().expect("thread list empty");
+            let next = unsafe { list.pop_front().unwrap_unchecked() };
             if list.is_empty() {
                 self.ready.remove(highest);
             }

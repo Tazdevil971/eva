@@ -2,12 +2,12 @@ use linked_list_allocator::Heap;
 
 use alloc::alloc;
 use core::alloc::{GlobalAlloc, Layout};
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 use core::ptr::{self, NonNull};
 
 use crate::rt::pause::{PauseCell, with_pause};
 
-struct KAlloc(PauseCell<RefCell<Heap>>);
+struct KAlloc(PauseCell<UnsafeCell<Heap>>);
 
 impl KAlloc {
     unsafe fn new(start: *mut u8, end: *mut u8) -> Self {
@@ -21,14 +21,14 @@ impl KAlloc {
     }
 
     const fn from_heap(heap: Heap) -> Self {
-        Self(PauseCell::new(RefCell::new(heap)))
+        Self(PauseCell::new(UnsafeCell::new(heap)))
     }
 
     fn with_heap<F, T>(&self, f: F) -> T
     where
         F: FnOnce(&mut Heap) -> T,
     {
-        with_pause(|token| f(&mut *self.0.borrow_ref_mut(token)))
+        with_pause(|token| f(&mut *unsafe { self.0.as_mut_unchecked(token) }))
     }
 }
 
