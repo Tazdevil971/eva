@@ -429,12 +429,16 @@ impl port::Impl for PortabilityImpl {
     }
 
     fn yield_now() {
+        compiler_fence(Ordering::SeqCst);
         unsafe {
             eva_pac::SCB
                 .icsr()
                 .write(eva_pac::scb::IcsrBits::default().set_pendsvset(true));
+        
+            // This is required, to immediately flush the pending interrupt
+            asm!("dsb", options(nostack, preserves_flags));
         }
-        compiler_fence(Ordering::Acquire);
+        compiler_fence(Ordering::SeqCst);
     }
 
     fn kwrite(data: &[u8]) -> usize {
