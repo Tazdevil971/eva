@@ -45,10 +45,12 @@ impl<A: Adapter + Clone> AtomicLinkedList<A> {
         let node = self.adapter.ptr_to_raw(ptr);
 
         // Check that the node was not linked to anything
-        assert!(
-            unsafe { !self.is_linked(node) },
-            "Attempted to link an already linked node!"
-        );
+        // ============ Disabled for fast! ============
+        // assert!(
+        //     unsafe { !self.is_linked(node) },
+        //     "Attempted to link an already linked node!"
+        // );
+        // ============ Disabled for fast! ============
 
         node
     }

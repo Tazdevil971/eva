@@ -12,7 +12,7 @@ pub mod time;
 pub mod tls;
 
 use core::cell::Cell;
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 use core::ffi::CStr;
 use core::num::NonZeroU32;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -54,8 +54,8 @@ enum State {
 /// Internal scheduler structure
 struct Scheduler {
     state: PauseCell<Cell<State>>,
-    sched_queue: PauseCell<RefCell<SchedQueue>>,
-    thread_list: PauseCell<RefCell<ThreadList>>,
+    sched_queue: PauseCell<UnsafeCell<SchedQueue>>,
+    thread_list: PauseCell<UnsafeCell<ThreadList>>,
     resume_defer_list: AtomicLinkedList<DeferAdapter>,
     next_tid: AtomicU32,
     current: AtomicThreadPtr,
@@ -63,8 +63,8 @@ struct Scheduler {
 
 static SCHEDULER: Scheduler = Scheduler {
     state: PauseCell::cell(State::Idle),
-    sched_queue: PauseCell::ref_cell(SchedQueue::new()),
-    thread_list: PauseCell::ref_cell(ThreadList::new()),
+    sched_queue: PauseCell::unsafe_cell(SchedQueue::new()),
+    thread_list: PauseCell::unsafe_cell(ThreadList::new()),
     resume_defer_list: AtomicLinkedList::new(DeferAdapter),
     next_tid: AtomicU32::new(1),
     current: AtomicThreadPtr::new(None),
@@ -72,7 +72,7 @@ static SCHEDULER: Scheduler = Scheduler {
 
 fn gen_tid() -> ThreadId {
     let id = SCHEDULER.next_tid.fetch_add(1, Ordering::Release);
-    ThreadId(NonZeroU32::new(id).unwrap())
+    unsafe { ThreadId(NonZeroU32::new(id).unwrap_unchecked()) }
 }
 
 fn start() {
@@ -104,10 +104,7 @@ pub fn yield_now() {
 
 fn current_raw() -> ThreadPtr {
     // TODO(davide.mor): Review memory ordering here
-    SCHEDULER
-        .current
-        .load(Ordering::Relaxed)
-        .expect("No current thread, scheduler is running!")
+    unsafe { SCHEDULER.current.load(Ordering::Relaxed).unwrap_unchecked() }
 }
 
 fn local_raw() -> &'static ThreadLocalInner {
@@ -148,7 +145,7 @@ fn thread_exit_pad() -> ! {
             }
             TermAction::Resume(thread) => {
                 // Someone is waiting for our demise, notify them!
-                resume_paused_raw(token, thread).expect("thread in wake list but awake");
+                let _ = resume_paused_raw(token, thread);
             }
             TermAction::Detach => {
                 // We are detached, self-clean
@@ -157,7 +154,7 @@ fn thread_exit_pad() -> ! {
                 unsafe {
                     SCHEDULER
                         .thread_list
-                        .borrow_ref_mut(token)
+                        .as_mut_unchecked(token)
                         .remove_thread(thread);
                 }
 
@@ -181,7 +178,9 @@ pub fn spawn(
     name: &CStr,
     user: *mut (),
 ) -> Option<Thread> {
-    assert!(is_valid_prio(priority), "invalid priority");
+    // ============ Disabled for fast! ============
+    // assert!(is_valid_prio(priority), "invalid priority");
+    // ============ Disabled for fast! ============
 
     extern "C" fn launcher(arg1: *mut (), arg2: *mut (), _arg3: *mut (), _arg4: *mut ()) -> ! {
         let entry = unsafe { mem::transmute::<_, ThreadFn>(arg1) };
@@ -203,17 +202,17 @@ pub fn spawn(
         ptr::null_mut(),
     );
 
-    with_pause(|token| {
+    with_pause(|token| unsafe {
         // Insert the new thread in the scheduler
         SCHEDULER
             .sched_queue
-            .borrow_ref_mut(token)
+            .as_mut_unchecked(token)
             .push_thread(thread);
 
         // Insert it also in the active thread list
         SCHEDULER
             .thread_list
-            .borrow_ref_mut(token)
+            .as_mut_unchecked(token)
             .add_thread(thread);
     });
 
@@ -227,7 +226,12 @@ pub fn exists(thread: Thread) -> bool {
 
 #[unsafe(export_name = "eva_rt_exists_paused")]
 pub fn exists_paused(token: PauseToken, thread: Thread) -> bool {
-    SCHEDULER.thread_list.borrow_ref_mut(token).exists(thread.0)
+    unsafe {
+        SCHEDULER
+            .thread_list
+            .as_mut_unchecked(token)
+            .exists(thread.0)
+    }
 }
 
 unsafe fn join_inner(token: PauseToken, thread: Thread) -> Result<ThreadPtr, OsError> {
@@ -259,7 +263,7 @@ unsafe fn join_inner(token: PauseToken, thread: Thread) -> Result<ThreadPtr, OsE
         // SAFETY: This thread is alive and guaranteed to be valid, it must be in the thread list
         SCHEDULER
             .thread_list
-            .borrow_ref_mut(token)
+            .as_mut_unchecked(token)
             .remove_thread(thread);
     }
 
@@ -313,7 +317,7 @@ unsafe fn detach_inner(token: PauseToken, thread: Thread) -> Result<Option<Threa
         unsafe {
             SCHEDULER
                 .thread_list
-                .borrow_ref_mut(token)
+                .as_mut_unchecked(token)
                 .remove_thread(thread);
         }
 
@@ -377,10 +381,12 @@ fn resume_paused_raw(token: PauseToken, thread: ThreadPtr) -> Result<(), OsError
     }
 
     thread.state.set(token, thread::State::Ready);
-    SCHEDULER
-        .sched_queue
-        .borrow_ref_mut(token)
-        .push_thread(thread);
+    unsafe {
+        SCHEDULER
+            .sched_queue
+            .as_mut_unchecked(token)
+            .push_thread(thread);
+    }
 
     // Check if we woke up a thread with higher priority
     let current = current_raw();
@@ -487,15 +493,13 @@ fn run_scheduler_paused(token: PauseToken) {
     let thread = current_raw();
 
     let state = thread.state.get(token);
-    let mut sched_queue = SCHEDULER.sched_queue.borrow_ref_mut(token);
+    let sched_queue = unsafe { SCHEDULER.sched_queue.as_mut_unchecked(token) };
 
     if state == thread::State::Ready {
         sched_queue.push_thread(thread);
     }
 
-    let next = sched_queue
-        .pop_thread()
-        .expect("no available thread, scheduler is not running!");
+    let next = unsafe { sched_queue.pop_thread().unwrap_unchecked() };
 
     unsafe {
         set_current_paused(token, next);
@@ -520,14 +524,12 @@ pub unsafe fn init() {
     let idle = idle::create();
 
     // Install idle thread
-    with_pause(|token| {
+    with_pause(|token| unsafe {
         SCHEDULER
             .sched_queue
-            .borrow_ref_mut(token)
+            .as_mut_unchecked(token)
             .push_thread(idle);
 
-        unsafe {
-            set_current_paused(token, idle);
-        }
+        set_current_paused(token, idle);
     });
 }

@@ -1,4 +1,4 @@
-use core::cell::{RefCell, UnsafeCell};
+use core::cell::UnsafeCell;
 use core::ptr;
 use core::ptr::NonNull;
 use core::time::Duration;
@@ -151,7 +151,7 @@ impl PriorityWakeList {
             return false;
         };
 
-        rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");
+        let _ = rt::resume_paused_raw(token, node.thread);
         true
     }
 
@@ -162,7 +162,7 @@ impl PriorityWakeList {
         };
 
         while let Some(node) = list.pop_back() {
-            rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");
+            let _ = rt::resume_paused_raw(token, node.thread);
         }
     }
 }
@@ -208,13 +208,13 @@ impl linked_list::Adapter for TimedWakeupAdapter {
 }
 
 pub(super) struct TimedWakeList {
-    list: PauseCell<RefCell<LinkedList<TimedWakeupAdapter>>>,
+    list: PauseCell<UnsafeCell<LinkedList<TimedWakeupAdapter>>>,
 }
 
 impl TimedWakeList {
     pub(super) const fn new() -> Self {
         Self {
-            list: PauseCell::ref_cell(LinkedList::new(TimedWakeupAdapter)),
+            list: PauseCell::unsafe_cell(LinkedList::new(TimedWakeupAdapter)),
         }
     }
 
@@ -230,7 +230,7 @@ impl TimedWakeList {
 
         // Insert the node in the appropriate position
         {
-            let mut list = self.list.borrow_ref_mut(token);
+            let list = unsafe { self.list.as_mut_unchecked(token) };
             let mut cursor = list.cursor_front_mut();
 
             while let Some(value) = cursor.current() {
@@ -253,7 +253,7 @@ impl TimedWakeList {
                 return;
             }
 
-            let mut list = self.list.borrow_ref_mut(token);
+            let list = unsafe { self.list.as_mut_unchecked(token) };
             let mut cursor = unsafe {
                 // SAFETY: This node is inside the list and the pointer is valid
                 list.cursor_mut_from_raw(NonNull::from(&node))
@@ -266,10 +266,10 @@ impl TimedWakeList {
     }
 
     pub(super) fn wakeup_until(&self, token: PauseToken, instant: Duration) {
-        let mut list = self.list.borrow_ref_mut(token);
+        let list = unsafe { self.list.as_mut_unchecked(token) };
 
         while let Some(node) = list.pop_back_if(|ptr| ptr.timeout < instant) {
-            rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");
+            let _ = rt::resume_paused_raw(token, node.thread);
         }
     }
 }
