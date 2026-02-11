@@ -1,3 +1,6 @@
 [unstable]
 build-std = ["core", "alloc"]
 build-std-features = ["compiler-builtins-mem"]
+
+[env]
+EVA_TARGET_CHIP = "stm32f767zi"

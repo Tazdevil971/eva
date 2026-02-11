@@ -10,7 +10,11 @@ members = [
     "examples/hello-world",
     "examples/sync-queue",
     "examples/sync-queue-std",
-    "examples/sync-queue-c"
+    "examples/sync-queue-c",
+    "examples/benches/bench-yield",
+    "examples/benches/bench-baseline",
+    "examples/benches/bench-mutex",
+    "examples/benches/bench-condvar",
 ]
 
 [workspace.dependencies]

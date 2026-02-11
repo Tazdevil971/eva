@@ -549,9 +549,12 @@ unsafe extern "C" fn SysTick() {
     MS.fetch_add(10, Ordering::Relaxed);
 
     // Pend a yield
-    unsafe {
-        eva_pac::SCB
-            .icsr()
-            .write(eva_pac::scb::IcsrBits::default().set_pendsvset(true));
-    }
+
+    // ============ Disabled for benchmarks! ============
+    // unsafe {
+    //     eva_pac::SCB
+    //         .icsr()
+    //         .write(eva_pac::scb::IcsrBits::default().set_pendsvset(true));
+    // }
+    // ============ Disabled for benchmarks! ============
 }
