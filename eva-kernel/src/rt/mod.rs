@@ -23,7 +23,7 @@ use eva_abi::ThreadId;
 use pause::pend_yield;
 use pause::{PauseCell, PauseToken, run_scheduler, with_pause, yield_now_from_paused};
 use sched_queue::SchedQueue;
-use thread::{AtomicThreadPtr, DeferAdapter, TermAction, ThreadPtr};
+use thread::{AtomicThreadPtr, DeferAdapter, TermAction, ThreadLocalInner, ThreadPtr};
 use thread_list::ThreadList;
 
 use eva_abi::OsError;
@@ -110,6 +110,14 @@ fn current_raw() -> ThreadPtr {
         .expect("No current thread, scheduler is running!")
 }
 
+fn local_raw() -> &'static ThreadLocalInner {
+    let current = current_raw();
+    unsafe {
+        // SAFETY: We obtained this thread via current_raw
+        current.local.get()
+    }
+}
+
 /// Retrieve the currently running thread.
 #[unsafe(export_name = "eva_rt_current")]
 pub fn current() -> Thread {
@@ -119,8 +127,15 @@ pub fn current() -> Thread {
 fn thread_exit_pad() -> ! {
     let thread = current_raw();
 
-    // First thread destructors
-    thread.run_dtors();
+    {
+        let local = unsafe {
+            // SAFETY: We obtained this thread via current_raw
+            thread.local.get()
+        };
+
+        // Run thread destructors
+        local.store.run_dtors();
+    }
 
     with_pause(|token| {
         // First transition to terminated
@@ -456,7 +471,7 @@ pub fn suspend_and_yield_paused_for(token: PauseToken, time: Duration) -> bool {
 pub fn suspend_and_yield_paused_until(token: PauseToken, time: Duration) -> bool {
     time::with_timed_wakeup(token, time, |_, wakeup| {
         suspend_and_yield_paused(token);
-        !wakeup.is_expired(token)
+        !wakeup.is_expired()
     })
 }
 

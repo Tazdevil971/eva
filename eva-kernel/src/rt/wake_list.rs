@@ -1,4 +1,4 @@
-use core::cell::UnsafeCell;
+use core::cell::{RefCell, UnsafeCell};
 use core::ptr;
 use core::ptr::NonNull;
 use core::time::Duration;
@@ -8,7 +8,7 @@ use crate::rt::pause::{PauseCell, PauseToken};
 use crate::rt::thread::ThreadPtr;
 
 use bytemuck::Zeroable;
-use eva_utils::linked_list::{self, LinkedList};
+use eva_utils::linked_list::{self, LinkOps as _, LinkedList};
 use eva_utils::unchecked_ref::UncheckedRef;
 use eva_utils::{assert_send, assert_sync};
 use scopeguard::defer;
@@ -29,7 +29,7 @@ in the destructor, and enforce manual explicit unsafe destruction
 
 #[derive(Debug)]
 pub struct PriorityWakeup {
-    link: PauseCell<linked_list::Link<Self>>,
+    link: linked_list::AtomicLink<Self>,
     thread: ThreadPtr,
 }
 
@@ -37,8 +37,8 @@ assert_send!(PriorityWakeup);
 assert_sync!(PriorityWakeup);
 
 impl PriorityWakeup {
-    pub fn is_signaled(&self, token: PauseToken) -> bool {
-        !self.link.borrow(token).is_linked()
+    pub fn is_signaled(&self) -> bool {
+        !self.link.is_linked()
     }
 }
 
@@ -48,13 +48,11 @@ struct PriorityWakeupAdapter;
 impl linked_list::Adapter for PriorityWakeupAdapter {
     type Ptr = UncheckedRef<PriorityWakeup>;
     type Value = PriorityWakeup;
+    type Link = linked_list::AtomicLink<PriorityWakeup>;
 
-    unsafe fn raw_to_link(
-        &self,
-        raw: NonNull<Self::Value>,
-    ) -> NonNull<linked_list::Link<Self::Value>> {
+    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Self::Link> {
         unsafe {
-            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).link.get_mut());
+            let ptr = ptr::addr_of_mut!((*raw.as_ptr()).link);
             NonNull::new_unchecked(ptr)
         }
     }
@@ -90,7 +88,7 @@ impl PriorityWakeList {
         let thread = rt::current_raw();
 
         let node = PriorityWakeup {
-            link: PauseCell::new(linked_list::Link::unlinked()),
+            link: linked_list::AtomicLink::unlinked(),
             thread,
         };
 
@@ -124,7 +122,7 @@ impl PriorityWakeList {
         // Remove the node at the end of the scope
         defer! {
             // Do nothing if the node is already unlinked
-            if !node.link.borrow(token).is_linked() {
+            if !node.link.is_linked() {
                 return;
             }
 
@@ -171,7 +169,7 @@ impl PriorityWakeList {
 
 #[derive(Debug)]
 pub struct TimedWakeup {
-    link: PauseCell<linked_list::Link<Self>>,
+    link: linked_list::AtomicLink<Self>,
     thread: ThreadPtr,
     timeout: Duration,
 }
@@ -180,8 +178,8 @@ assert_send!(TimedWakeup);
 assert_sync!(TimedWakeup);
 
 impl TimedWakeup {
-    pub(super) fn is_expired(&self, token: PauseToken) -> bool {
-        !self.link.borrow(token).is_linked()
+    pub(super) fn is_expired(&self) -> bool {
+        !self.link.is_linked()
     }
 }
 
@@ -191,13 +189,11 @@ struct TimedWakeupAdapter;
 impl linked_list::Adapter for TimedWakeupAdapter {
     type Ptr = UncheckedRef<TimedWakeup>;
     type Value = TimedWakeup;
+    type Link = linked_list::AtomicLink<TimedWakeup>;
 
-    unsafe fn raw_to_link(
-        &self,
-        raw: NonNull<Self::Value>,
-    ) -> NonNull<linked_list::Link<Self::Value>> {
+    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Self::Link> {
         unsafe {
-            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).link.get_mut());
+            let ptr = ptr::addr_of_mut!((*raw.as_ptr()).link);
             NonNull::new_unchecked(ptr)
         }
     }
@@ -211,15 +207,14 @@ impl linked_list::Adapter for TimedWakeupAdapter {
     }
 }
 
-#[derive(Zeroable)]
 pub(super) struct TimedWakeList {
-    list: PauseCell<UnsafeCell<LinkedList<TimedWakeupAdapter>>>,
+    list: PauseCell<RefCell<LinkedList<TimedWakeupAdapter>>>,
 }
 
 impl TimedWakeList {
     pub(super) const fn new() -> Self {
         Self {
-            list: PauseCell::unsafe_cell(LinkedList::new(TimedWakeupAdapter)),
+            list: PauseCell::ref_cell(LinkedList::new(TimedWakeupAdapter)),
         }
     }
 
@@ -228,17 +223,14 @@ impl TimedWakeList {
         F: FnOnce(PauseToken, &TimedWakeup) -> T,
     {
         let node = TimedWakeup {
-            link: PauseCell::new(linked_list::Link::unlinked()),
+            link: linked_list::AtomicLink::unlinked(),
             thread: rt::current_raw(),
             timeout,
         };
 
         // Insert the node in the appropriate position
         {
-            let list = unsafe {
-                // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
-                self.list.as_mut_unchecked(token)
-            };
+            let mut list = self.list.borrow_ref_mut(token);
             let mut cursor = list.cursor_front_mut();
 
             while let Some(value) = cursor.current() {
@@ -257,14 +249,11 @@ impl TimedWakeList {
 
         // Defer the node at the end of the scope
         defer! {
-            if !node.link.borrow(token).is_linked() {
+            if !node.link.is_linked() {
                 return;
             }
 
-            let list = unsafe {
-                // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
-                self.list.as_mut_unchecked(token)
-            };
+            let mut list = self.list.borrow_ref_mut(token);
             let mut cursor = unsafe {
                 // SAFETY: This node is inside the list and the pointer is valid
                 list.cursor_mut_from_raw(NonNull::from(&node))
@@ -277,10 +266,7 @@ impl TimedWakeList {
     }
 
     pub(super) fn wakeup_until(&self, token: PauseToken, instant: Duration) {
-        let list = unsafe {
-            // SAFETY: Since the scheduler is paused and we do not yield, we ensure that this is the only alive mutable reference
-            self.list.as_mut_unchecked(token)
-        };
+        let mut list = self.list.borrow_ref_mut(token);
 
         while let Some(node) = list.pop_back_if(|ptr| ptr.timeout < instant) {
             rt::resume_paused_raw(token, node.thread).expect("thread in wake list but awake");

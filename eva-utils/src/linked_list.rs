@@ -1,6 +1,8 @@
 use core::cell::Cell;
 use core::fmt::{self, Debug};
-use core::ptr::NonNull;
+use core::marker::PhantomPinned;
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bytemuck::Zeroable;
 
@@ -10,9 +12,8 @@ use bytemuck::Zeroable;
 pub struct Link<T> {
     next: Cell<Option<NonNull<T>>>,
     prev: Cell<Option<NonNull<T>>>,
+    _pin: PhantomPinned,
 }
-
-unsafe impl<T> Send for Link<T> {}
 
 impl<T> Link<T> {
     // TODO: Provenance?
@@ -25,25 +26,130 @@ impl<T> Link<T> {
         Self {
             next: Cell::new(Self::UNLINKED_MARKER),
             prev: Cell::new(Self::UNLINKED_MARKER),
+            _pin: PhantomPinned,
         }
     }
+}
 
-    /// Check if this node is linked to any list.
-    pub fn is_linked(&self) -> bool {
+impl<T> LinkOps for Link<T> {
+    type Value = T;
+
+    fn is_linked(&self) -> bool {
         self.next.get() != Self::UNLINKED_MARKER
     }
 
-    fn set_unlinked(&self) {
+    fn get_next(&self) -> Option<NonNull<Self::Value>> {
+        self.next.get()
+    }
+
+    fn get_prev(&self) -> Option<NonNull<Self::Value>> {
+        self.prev.get()
+    }
+
+    unsafe fn set_unlinked(&self) {
         self.next.set(Self::UNLINKED_MARKER);
         self.prev.set(Self::UNLINKED_MARKER);
+    }
+
+    unsafe fn set_next(&self, ptr: Option<NonNull<Self::Value>>) {
+        self.next.set(ptr);
+    }
+
+    unsafe fn set_prev(&self, ptr: Option<NonNull<Self::Value>>) {
+        self.prev.set(ptr);
     }
 }
 
 impl<T> Drop for Link<T> {
     fn drop(&mut self) {
         // Shouldn't happen, but check anyways
-        assert!(!self.is_linked(), "dropped node linked to a lise");
+        assert!(!self.is_linked(), "dropped node linked to a list");
     }
+}
+
+/// Structure used to embed the required pointers inside the node.
+#[repr(align(2))]
+#[derive(Debug)]
+pub struct AtomicLink<T> {
+    next: AtomicPtr<T>,
+    prev: AtomicPtr<T>,
+    _pin: PhantomPinned,
+}
+
+impl<T> AtomicLink<T> {
+    // TODO: Provenance?
+    /// Internal marker used to signal an unlinked node.
+    const UNLINKED_MARKER: *mut T = 1 as *mut T;
+
+    /// Create a new unlinked node.
+    pub const fn unlinked() -> Self {
+        Self {
+            next: AtomicPtr::new(Self::UNLINKED_MARKER),
+            prev: AtomicPtr::new(Self::UNLINKED_MARKER),
+            _pin: PhantomPinned,
+        }
+    }
+}
+
+impl<T> LinkOps for AtomicLink<T> {
+    type Value = T;
+
+    fn is_linked(&self) -> bool {
+        // TODO(davide.mor): Review memory ordering here
+        self.next.load(Ordering::SeqCst) != Self::UNLINKED_MARKER
+    }
+
+    fn get_next(&self) -> Option<NonNull<Self::Value>> {
+        // TODO(davide.mor): Review memory ordering here
+        NonNull::new(self.next.load(Ordering::SeqCst))
+    }
+
+    fn get_prev(&self) -> Option<NonNull<Self::Value>> {
+        // TODO(davide.mor): Review memory ordering here
+        NonNull::new(self.prev.load(Ordering::SeqCst))
+    }
+
+    unsafe fn set_unlinked(&self) {
+        // TODO(davide.mor): Review memory ordering here
+        self.next.store(Self::UNLINKED_MARKER, Ordering::SeqCst);
+        self.prev.store(Self::UNLINKED_MARKER, Ordering::SeqCst);
+    }
+
+    unsafe fn set_next(&self, ptr: Option<NonNull<Self::Value>>) {
+        // TODO(davide.mor): Review memory ordering here
+        self.next.store(
+            ptr.map(NonNull::as_ptr).unwrap_or(ptr::null_mut()),
+            Ordering::SeqCst,
+        );
+    }
+
+    unsafe fn set_prev(&self, ptr: Option<NonNull<Self::Value>>) {
+        // TODO(davide.mor): Review memory ordering here
+        self.prev.store(
+            ptr.map(NonNull::as_ptr).unwrap_or(ptr::null_mut()),
+            Ordering::SeqCst,
+        );
+    }
+}
+
+impl<T> Drop for AtomicLink<T> {
+    fn drop(&mut self) {
+        // Shouldn't happen, but check anyways
+        assert!(!self.is_linked(), "dropped node linked to a list");
+    }
+}
+
+pub trait LinkOps {
+    /// The value
+    type Value;
+
+    fn is_linked(&self) -> bool;
+    fn get_next(&self) -> Option<NonNull<Self::Value>>;
+    fn get_prev(&self) -> Option<NonNull<Self::Value>>;
+
+    unsafe fn set_unlinked(&self);
+    unsafe fn set_next(&self, ptr: Option<NonNull<Self::Value>>);
+    unsafe fn set_prev(&self, ptr: Option<NonNull<Self::Value>>);
 }
 
 /// Trait defining how a particular node should be used.
@@ -52,9 +158,11 @@ pub trait Adapter {
     type Ptr;
     /// Value obtained by dereferencing the pointer, and obtained by borrowing from the list.
     type Value;
+    /// Type of the links used.
+    type Link: LinkOps<Value = Self::Value>;
 
     /// Obtain a pointer to the links from a raw pointer to the node.
-    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Link<Self::Value>>;
+    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Self::Link>;
 
     /// Convert a `Ptr` to a raw pointer to `Value`.
     fn ptr_to_raw(&self, ptr: Self::Ptr) -> NonNull<Self::Value>;
@@ -63,6 +171,9 @@ pub trait Adapter {
     /// - `raw` must be a valid pointer.
     unsafe fn ptr_from_raw(&self, raw: NonNull<Self::Value>) -> Self::Ptr;
 }
+
+/// This trait asserts that the pointer does not allow for sharing of the contents, once inserted in the linked list the linked list owns the value.
+pub unsafe trait OwningAdapter: Adapter {}
 
 /// Intrusive linked list.
 #[derive(Zeroable)]
@@ -96,7 +207,7 @@ impl<A: Adapter> LinkedList<A> {
         }
     }
 
-    unsafe fn node_to_links<'a>(&self, node: NonNull<A::Value>) -> &'a Link<A::Value> {
+    unsafe fn node_to_links<'a>(&self, node: NonNull<A::Value>) -> &'a A::Link {
         unsafe { self.adapter.raw_to_link(node).as_ref() }
     }
 
@@ -104,7 +215,7 @@ impl<A: Adapter> LinkedList<A> {
     unsafe fn link2(&mut self, prev: Option<NonNull<A::Value>>, next: Option<NonNull<A::Value>>) {
         if let Some(prev) = prev {
             unsafe {
-                self.node_to_links(prev).next.set(next);
+                self.node_to_links(prev).set_next(next);
             }
         } else {
             self.head = next;
@@ -112,7 +223,7 @@ impl<A: Adapter> LinkedList<A> {
 
         if let Some(next) = next {
             unsafe {
-                self.node_to_links(next).prev.set(prev);
+                self.node_to_links(next).set_prev(prev);
             }
         } else {
             self.tail = prev;
@@ -141,11 +252,11 @@ impl<A: Adapter> LinkedList<A> {
     }
 
     unsafe fn next(&self, node: NonNull<A::Value>) -> Option<NonNull<A::Value>> {
-        unsafe { self.node_to_links(node).next.get() }
+        unsafe { self.node_to_links(node).get_next() }
     }
 
     unsafe fn prev(&self, node: NonNull<A::Value>) -> Option<NonNull<A::Value>> {
-        unsafe { self.node_to_links(node).prev.get() }
+        unsafe { self.node_to_links(node).get_prev() }
     }
 
     unsafe fn release_ownership(&self, node: NonNull<A::Value>) -> A::Ptr {
@@ -166,6 +277,26 @@ impl<A: Adapter> LinkedList<A> {
         );
 
         node
+    }
+}
+
+impl<A: OwningAdapter> LinkedList<A> {
+    /// Obtain an iterator over all of the elements of the list.
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut A::Value> {
+        let mut cur = self.head;
+
+        core::iter::from_fn(move || {
+            let mut node = cur?;
+            cur = unsafe {
+                // SAFETY: node is always a valid pointer
+                self.next(node)
+            };
+
+            Some(unsafe {
+                // SAFETY: node is always a valid pointer
+                node.as_mut()
+            })
+        })
     }
 }
 
@@ -225,24 +356,6 @@ impl<A: Adapter> LinkedList<A> {
             Some(unsafe {
                 // SAFETY: node is always a valid pointer
                 node.as_ref()
-            })
-        })
-    }
-
-    /// Obtain an iterator over all of the elements of the list.
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut A::Value> {
-        let mut cur = self.head;
-
-        core::iter::from_fn(move || {
-            let mut node = cur?;
-            cur = unsafe {
-                // SAFETY: node is always a valid pointer
-                self.next(node)
-            };
-
-            Some(unsafe {
-                // SAFETY: node is always a valid pointer
-                node.as_mut()
             })
         })
     }
@@ -442,6 +555,20 @@ pub struct CursorMut<'a, A: Adapter> {
 
 impl<'a, A> CursorMut<'a, A>
 where
+    A: OwningAdapter,
+{
+    /// Obtain the currently pointed value, mutably.
+    /// Returns None if this points to the fictitious node.
+    pub fn current_mut(&mut self) -> Option<&mut A::Value> {
+        self.cur.map(|mut node| unsafe {
+            // SAFETY: cur is always a valid pointer
+            node.as_mut()
+        })
+    }
+}
+
+impl<'a, A> CursorMut<'a, A>
+where
     A: Adapter,
 {
     /// Obtain the currently pointed value.
@@ -450,15 +577,6 @@ where
         self.cur.map(|node| unsafe {
             // SAFETY: cur is always a valid pointer
             node.as_ref()
-        })
-    }
-
-    /// Obtain the currently pointed value, mutably.
-    /// Returns None if this points to the fictitious node.
-    pub fn current_mut(&mut self) -> Option<&mut A::Value> {
-        self.cur.map(|mut node| unsafe {
-            // SAFETY: cur is always a valid pointer
-            node.as_mut()
         })
     }
 

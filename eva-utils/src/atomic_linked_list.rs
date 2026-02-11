@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::singly_linked_list::{self, SinglyLinkedList};
 
-pub use singly_linked_list::{Adapter, Link};
+pub use singly_linked_list::{Adapter, Link, LinkOps as _};
 
 pub struct AtomicLinkedList<A: Adapter + Clone> {
     head: AtomicPtr<A::Value>,
@@ -33,7 +33,7 @@ impl<A: Adapter + Clone> AtomicLinkedList<A> {
         }
     }
 
-    unsafe fn node_to_links<'a>(&self, node: NonNull<A::Value>) -> &'a Link<A::Value> {
+    unsafe fn node_to_links<'a>(&self, node: NonNull<A::Value>) -> &'a A::Link {
         unsafe { self.adapter.raw_to_link(node).as_ref() }
     }
 
@@ -71,7 +71,7 @@ impl<A: Adapter + Clone> AtomicLinkedList<A> {
             unsafe {
                 // SAFETY: take_ownership always returns a valid pointer
                 // SAFETY: head is always a valid pointer
-                self.node_to_links(node).next.set(NonNull::new(head));
+                self.node_to_links(node).set_next(NonNull::new(head));
             }
 
             // TODO(davide.mor): Review memory ordering here

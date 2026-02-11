@@ -54,7 +54,7 @@ impl RawCondvar {
                     loop {
                         rt::suspend_and_yield_paused(token);
 
-                        if wakeup.is_signaled(token) {
+                        if wakeup.is_signaled() {
                             break;
                         }
                     }
@@ -77,11 +77,11 @@ impl RawCondvar {
                         loop {
                             rt::suspend_and_yield_paused(token);
 
-                            if wakeup2.is_signaled(token) {
+                            if wakeup2.is_signaled() {
                                 return true;
                             }
 
-                            if wakeup.is_expired(token) {
+                            if wakeup.is_expired() {
                                 return false;
                             }
                         }

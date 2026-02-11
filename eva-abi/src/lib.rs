@@ -324,7 +324,7 @@ unsafe extern "Rust" {
 
 unsafe extern "C" {
     // General functions
-    pub /* safe */ unsafe fn eva_c_get_time() -> Duration2;
+    pub unsafe fn eva_c_get_time() -> Duration2;
     pub unsafe fn eva_c_io_kwrite(data: *const u8, len: usize) -> usize;
     pub unsafe fn eva_c_io_kread(data: *mut u8, len: usize) -> usize;
 
@@ -342,53 +342,53 @@ unsafe extern "C" {
         name: *const c_char,
         user: *mut (),
     ) -> Thread2;
-    pub /* safe */ unsafe fn eva_c_rt_exists(thread: Thread2) -> bool;
+    pub unsafe fn eva_c_rt_exists(thread: Thread2) -> bool;
     pub unsafe fn eva_c_rt_exists_paused(thread: Thread2) -> bool;
-    pub /* safe */ unsafe fn eva_c_rt_join(thread: Thread2) -> c_int;
+    pub unsafe fn eva_c_rt_join(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_join_unchecked(thread: Thread2) -> c_int;
-    pub /* safe */ unsafe fn eva_c_rt_detach(thread: Thread2) -> c_int;
+    pub unsafe fn eva_c_rt_detach(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_detach_unchecked(thread: Thread2) -> c_int;
 
     // Thread getters
-    pub /* safe */ unsafe fn eva_c_rt_get_current_priority() -> Priority;
-    pub /* safe */ unsafe fn eva_c_rt_get_current_tid() -> ThreadId2;
+    pub unsafe fn eva_c_rt_get_current_priority() -> Priority;
+    pub unsafe fn eva_c_rt_get_current_tid() -> ThreadId2;
 
     // Thread state management
     pub unsafe fn eva_c_rt_suspend_paused();
-    pub /* safe */ unsafe fn eva_c_rt_suspend_and_yield();
+    pub unsafe fn eva_c_rt_suspend_and_yield();
     pub unsafe fn eva_c_rt_suspend_and_yield_paused();
-    pub /* safe */ unsafe fn eva_c_rt_resume(thread: Thread2) -> c_int;
+    pub unsafe fn eva_c_rt_resume(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_resume_unchecked(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_resume_irq_unchecked(thread: Thread2);
     pub unsafe fn eva_c_rt_resume_paused(thread: Thread2) -> c_int;
     pub unsafe fn eva_c_rt_resume_paused_unchecked(thread: Thread2) -> c_int;
-    pub /* safe */ unsafe fn eva_c_rt_current() -> Thread2;
+    pub unsafe fn eva_c_rt_current() -> Thread2;
 
     // Time functions
-    pub /* safe */ unsafe fn eva_c_rt_sleep_for(time: Duration2);
-    pub /* safe */ unsafe fn eva_c_rt_sleep_until(time: Duration2);
-    pub /* safe */ unsafe fn eva_c_rt_suspend_and_yield_for(time: Duration2) -> bool;
-    pub /* safe */ unsafe fn eva_c_rt_suspend_and_yield_until(time: Duration2) -> bool;
+    pub unsafe fn eva_c_rt_sleep_for(time: Duration2);
+    pub unsafe fn eva_c_rt_sleep_until(time: Duration2);
+    pub unsafe fn eva_c_rt_suspend_and_yield_for(time: Duration2) -> bool;
+    pub unsafe fn eva_c_rt_suspend_and_yield_until(time: Duration2) -> bool;
     pub unsafe fn eva_c_rt_suspend_and_yield_paused_for(time: Duration2) -> bool;
     pub unsafe fn eva_c_rt_suspend_and_yield_paused_until(time: Duration2) -> bool;
 
     // Yield and task control
-    pub /* safe */ unsafe fn eva_c_rt_yield_now();
+    pub unsafe fn eva_c_rt_yield_now();
     pub unsafe fn eva_c_rt_pend_yield();
 
     // Scheduler functions
-    pub /* safe */ unsafe fn eva_c_rt_abort();
-    pub /* safe */ unsafe fn eva_c_rt_is_paused() -> bool;
-    pub /* safe */ unsafe fn eva_c_rt_pause();
+    pub unsafe fn eva_c_rt_abort();
+    pub unsafe fn eva_c_rt_is_paused() -> bool;
+    pub unsafe fn eva_c_rt_pause();
     pub unsafe fn eva_c_rt_unpause();
-    pub /* safe */ unsafe fn eva_c_rt_try_pause() -> bool;
+    pub unsafe fn eva_c_rt_try_pause() -> bool;
     pub unsafe fn eva_c_rt_try_unpause() -> bool;
 
     // TLS functions
-    pub /* safe */ unsafe fn eva_c_rt_tls_key_create(dtor: Option<extern "C" fn(*mut ())>) -> TlsKey2;
-    pub /* safe */ unsafe fn eva_c_rt_tls_key_delete(key: TlsKey2) -> c_int;
-    pub /* safe */ unsafe fn eva_c_rt_tls_set_specific(key: TlsKey2, data: *mut ()) -> c_int;
-    pub /* safe */ unsafe fn eva_c_rt_tls_get_specific(key: TlsKey2) -> *mut ();
+    pub unsafe fn eva_c_rt_tls_key_create(dtor: Option<extern "C" fn(*mut ())>) -> TlsKey2;
+    pub unsafe fn eva_c_rt_tls_key_delete(key: TlsKey2) -> c_int;
+    pub unsafe fn eva_c_rt_tls_set_specific(key: TlsKey2, data: *mut ()) -> c_int;
+    pub unsafe fn eva_c_rt_tls_get_specific(key: TlsKey2) -> *mut ();
 
     // Mutex functions
     pub unsafe fn eva_c_rt_sync_mutex_try_lock(mutex: *mut Mutex2) -> bool;

@@ -1,8 +1,12 @@
 #![no_std]
 #![no_main]
 
-extern crate alloc;
+#[cfg(target_arch = "x86_64")]
 extern crate eva_bsp_linux;
+#[cfg(target_arch = "arm")]
+extern crate eva_bsp_stm32f767;
+
+extern crate alloc;
 
 use alloc::collections::VecDeque;
 use core::panic::PanicInfo;

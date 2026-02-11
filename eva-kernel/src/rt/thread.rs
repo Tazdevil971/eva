@@ -1,6 +1,6 @@
 use alloc::alloc::{alloc, dealloc, handle_alloc_error};
 use core::alloc::{Layout, LayoutError};
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::CStr;
 use core::fmt::{self, Debug};
 use core::ops::Deref;
@@ -13,7 +13,7 @@ use crate::rt::pause::PauseCell;
 use crate::rt::tls::LocalStore;
 
 use eva_abi::{Priority, ThreadId};
-use eva_utils::{linked_list, singly_linked_list};
+use eva_utils::{assert_send, assert_sync, linked_list, singly_linked_list};
 
 const THREAD_STACK_ALIGN: usize = 16;
 
@@ -35,7 +35,19 @@ pub enum TermAction {
     Detach,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
+pub struct ThreadPointers {
+    pub base: NonNull<u8>,
+    pub stack_base: NonNull<u8>,
+    pub stack_top: NonNull<u8>,
+    pub switchctx: NonNull<u8>,
+    pub name: NonNull<u8>,
+}
+
+unsafe impl Send for ThreadPointers {}
+unsafe impl Sync for ThreadPointers {}
+
+#[derive(Debug, Clone, Copy)]
 struct ThreadLayout {
     layout: Layout,
     stack_base_offset: usize,
@@ -65,14 +77,23 @@ impl ThreadLayout {
         })
     }
 
-    unsafe fn alloc(&self) -> NonNull<u8> {
+    unsafe fn alloc(&self) -> (ThreadPointers, NonNull<Tcb>) {
         unsafe {
             let ptr = alloc(self.layout) as *mut u8;
             let Some(ptr) = NonNull::new(ptr) else {
                 handle_alloc_error(self.layout);
             };
 
-            ptr
+            (
+                ThreadPointers {
+                    base: ptr,
+                    stack_base: ptr.add(self.stack_base_offset),
+                    stack_top: ptr.add(self.stack_top_offset),
+                    switchctx: ptr.add(self.switchctx_offset),
+                    name: ptr.add(self.name_offset),
+                },
+                ptr.add(self.tcb_offset).cast(),
+            )
         }
     }
 
@@ -83,17 +104,45 @@ impl ThreadLayout {
     }
 }
 
+pub struct ThreadLocalInner {
+    /// Thread local store
+    pub store: LocalStore,
+}
+
+pub struct ThreadLocal(UnsafeCell<ThreadLocalInner>);
+
+impl ThreadLocal {
+    pub fn new() -> Self {
+        Self(UnsafeCell::new(ThreadLocalInner {
+            store: LocalStore::new(),
+        }))
+    }
+
+    pub unsafe fn get(&self) -> &'static ThreadLocalInner {
+        unsafe { self.0.get().as_ref().unwrap() }
+    }
+}
+
+unsafe impl Send for ThreadLocal {}
+unsafe impl Sync for ThreadLocal {}
+
+impl fmt::Debug for ThreadLocal {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ThreadLocal").finish_non_exhaustive()
+    }
+}
+
 pub struct Tcb {
     // Link used for scheduling operations:
     // - scheduling queues
-    sched_link: PauseCell<linked_list::Link<Self>>,
+    sched_link: linked_list::AtomicLink<Self>,
     // Link used for the thread list:
     // - active thread list
     // - idle deletion defer operation
-    thread_link: PauseCell<linked_list::Link<Self>>,
+    thread_link: linked_list::AtomicLink<Self>,
     // Link used for atomic defer operations:
     // - defer resume
-    defer_link: PauseCell<singly_linked_list::Link<Self>>,
+    defer_link: singly_linked_list::AtomicLink<Self>,
 
     pub state: PauseCell<Cell<State>>,
     pub term_action: PauseCell<Cell<TermAction>>,
@@ -104,27 +153,17 @@ pub struct Tcb {
     pub name_size: usize,
 
     // Thread local store
-    pub local_store: LocalStore,
-
-    // Layout stuff
-    pub base_ptr: *mut u8,
-    pub stack_base_ptr: *mut u8,
-    pub stack_top_ptr: *mut u8,
-    pub switchctx_ptr: *mut u8,
-    pub name_ptr: *mut u8,
+    pub local: ThreadLocal,
+    pub ptrs: ThreadPointers,
 }
 
 impl Tcb {
     pub fn name_bytes(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.name_ptr, self.name_size) }
+        unsafe { slice::from_raw_parts(self.ptrs.name.as_ptr(), self.name_size) }
     }
 
     pub fn name(&self) -> &CStr {
         unsafe { CStr::from_bytes_with_nul_unchecked(self.name_bytes()) }
-    }
-
-    pub fn run_dtors(&self) {
-        self.local_store.run_dtors();
     }
 }
 
@@ -144,19 +183,19 @@ impl Debug for Tcb {
             .field("thread_link", &self.thread_link)
             .field("defer_link", &self.defer_link)
             .field("state", &self.state)
-            .field("priority", &self.priority)
             .field("term_action", &self.term_action)
+            .field("priority", &self.priority)
             .field("id", &self.id)
             .field("switchctx", &SwitchCtx)
             .field("stack_size", &self.stack_size)
-            .field("stack_base_ptr", &self.stack_base_ptr)
-            .field("stack_top_ptr", &self.stack_top_ptr)
+            .field("local", &self.local)
+            .field("ptrs", &self.ptrs)
             .finish()
     }
 }
 
-unsafe impl Send for Tcb {}
-unsafe impl Sync for Tcb {}
+assert_send!(Tcb);
+assert_sync!(Tcb);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
@@ -171,13 +210,11 @@ pub struct SchedListAdapter;
 impl linked_list::Adapter for SchedListAdapter {
     type Ptr = ThreadPtr;
     type Value = Tcb;
+    type Link = linked_list::AtomicLink<Tcb>;
 
-    unsafe fn raw_to_link(
-        &self,
-        raw: NonNull<Self::Value>,
-    ) -> NonNull<linked_list::Link<Self::Value>> {
+    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Self::Link> {
         unsafe {
-            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).sched_link.get_mut());
+            let ptr = ptr::addr_of_mut!((*raw.as_ptr()).sched_link);
             NonNull::new_unchecked(ptr)
         }
     }
@@ -197,13 +234,11 @@ pub struct ThreadListAdapter;
 impl linked_list::Adapter for ThreadListAdapter {
     type Ptr = ThreadPtr;
     type Value = Tcb;
+    type Link = linked_list::AtomicLink<Tcb>;
 
-    unsafe fn raw_to_link(
-        &self,
-        raw: NonNull<Self::Value>,
-    ) -> NonNull<linked_list::Link<Self::Value>> {
+    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Self::Link> {
         unsafe {
-            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).thread_link.get_mut());
+            let ptr = ptr::addr_of_mut!((*raw.as_ptr()).thread_link);
             NonNull::new_unchecked(ptr)
         }
     }
@@ -223,13 +258,11 @@ pub struct DeferAdapter;
 impl singly_linked_list::Adapter for DeferAdapter {
     type Ptr = ThreadPtr;
     type Value = Tcb;
+    type Link = singly_linked_list::AtomicLink<Tcb>;
 
-    unsafe fn raw_to_link(
-        &self,
-        raw: NonNull<Self::Value>,
-    ) -> NonNull<singly_linked_list::Link<Self::Value>> {
+    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Self::Link> {
         unsafe {
-            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).defer_link.get_mut());
+            let ptr = ptr::addr_of_mut!((*raw.as_ptr()).defer_link);
             NonNull::new_unchecked(ptr)
         }
     }
@@ -259,7 +292,7 @@ impl ThreadPtr {
     #[allow(unused)]
     pub fn read_canary(self) -> [u8; 16] {
         // TODO: Why read volatile here? Is it really true that we must use volatile?
-        unsafe { self.stack_base_ptr.cast::<[u8; 16]>().read_volatile() }
+        unsafe { self.ptrs.stack_base.cast::<[u8; 16]>().read_volatile() }
     }
 
     pub fn create(
@@ -281,57 +314,40 @@ impl ThreadPtr {
             .expect("failed to calculate thread layout");
 
         // Allocate the whole structure
-        let base_ptr = unsafe { layout.alloc() };
+        let (ptrs, tcb_ptr) = unsafe { layout.alloc() };
 
-        // Calculate the various pointers
-        let (stack_base_ptr, stack_top_ptr, switchctx_ptr, tcb_ptr, name_ptr) = unsafe {
-            (
-                base_ptr.add(layout.stack_base_offset),
-                base_ptr.add(layout.stack_top_offset),
-                base_ptr.add(layout.switchctx_offset),
-                base_ptr.add(layout.tcb_offset),
-                base_ptr.add(layout.name_offset),
-            )
-        };
-
-        let tcb_ptr = tcb_ptr.cast::<Tcb>();
         let thread_ptr = ThreadPtr(tcb_ptr);
 
         // Paint stack canary
-        unsafe { stack_base_ptr.cast().write(THREAD_CANARY_VALUE) }
+        unsafe { ptrs.stack_base.cast().write(THREAD_CANARY_VALUE) }
 
         // Write thread name
         unsafe {
-            ptr::copy_nonoverlapping(name_bytes.as_ptr(), name_ptr.as_ptr(), name_bytes.len());
+            ptr::copy_nonoverlapping(name_bytes.as_ptr(), ptrs.name.as_ptr(), name_bytes.len());
         }
 
         // Initialize thread context
         let tcb = Tcb {
-            sched_link: PauseCell::new(linked_list::Link::unlinked()),
-            thread_link: PauseCell::new(linked_list::Link::unlinked()),
-            defer_link: PauseCell::new(singly_linked_list::Link::unlinked()),
+            sched_link: linked_list::AtomicLink::unlinked(),
+            thread_link: linked_list::AtomicLink::unlinked(),
+            defer_link: singly_linked_list::AtomicLink::unlinked(),
 
             state: PauseCell::cell(State::Ready),
             term_action: PauseCell::cell(TermAction::None),
             priority,
             id,
 
-            local_store: LocalStore::new(),
-
             stack_size,
             name_size,
 
-            base_ptr: base_ptr.as_ptr(),
-            stack_base_ptr: stack_base_ptr.as_ptr(),
-            stack_top_ptr: stack_top_ptr.as_ptr(),
-            switchctx_ptr: switchctx_ptr.as_ptr(),
-            name_ptr: name_ptr.as_ptr(),
+            local: ThreadLocal::new(),
+            ptrs,
         };
 
         unsafe {
             port::GlobalImpl::init_switchctx(
-                switchctx_ptr.as_ptr(),
-                stack_top_ptr.as_ptr(),
+                ptrs.switchctx.as_ptr(),
+                ptrs.stack_top.as_ptr(),
                 stack_size,
                 entry,
                 arg1,
@@ -356,8 +372,7 @@ impl ThreadPtr {
         let Tcb {
             stack_size,
             name_size,
-            base_ptr,
-            switchctx_ptr,
+            ptrs,
             ..
         } = unsafe { tcb.read() };
 
@@ -367,15 +382,15 @@ impl ThreadPtr {
 
         unsafe {
             // Run drop for switchctx
-            port::GlobalImpl::drop_switchctx(switchctx_ptr);
+            port::GlobalImpl::drop_switchctx(ptrs.switchctx.as_ptr());
             // Deallocate
-            layout.dealloc(base_ptr);
+            layout.dealloc(ptrs.base.as_ptr());
         }
     }
 
     pub unsafe fn set_as_global_switchctx(self) {
         unsafe {
-            port::GlobalImpl::set_global_switchctx(self.switchctx_ptr);
+            port::GlobalImpl::set_global_switchctx(self.ptrs.switchctx.as_ptr());
         }
     }
 }

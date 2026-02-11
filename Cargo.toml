@@ -10,7 +10,7 @@ members = [
     "examples/hello-world",
     "examples/sync-queue",
     "examples/sync-queue-std",
-    "examples/sync-queue-c",
+    "examples/sync-queue-c"
 ]
 
 [workspace.dependencies]

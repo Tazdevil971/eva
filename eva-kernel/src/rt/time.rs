@@ -24,7 +24,7 @@ pub fn sleep_for(duration: Duration) {
 pub fn sleep_until(expire: Duration) {
     with_pause(|token| {
         with_timed_wakeup(token, expire, |_, wakeup| {
-            while !wakeup.is_expired(token) {
+            while !wakeup.is_expired() {
                 suspend_and_yield_paused(token);
             }
         })

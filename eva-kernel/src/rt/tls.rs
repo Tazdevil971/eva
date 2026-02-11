@@ -3,7 +3,6 @@ use core::cell::RefCell;
 use core::ptr::{self, NonNull};
 
 use crate::rt;
-use crate::rt::pause::PauseCell;
 use crate::rt::sync::Mutex;
 
 use eva_abi::OsError;
@@ -40,11 +39,11 @@ fn key_run_dtor(key: TlsKey, data: NonNull<()>) {
 
 #[unsafe(export_name = "eva_rt_tls_set_specific")]
 pub fn set_specific(key: TlsKey, data: Option<NonNull<()>>) -> Result<(), OsError> {
-    let current = rt::current_raw();
+    let local = rt::local_raw();
     if let Some(data) = data {
-        current.local_store.set(key, data);
+        local.store.set(key, data);
     } else {
-        current.local_store.delete(key);
+        local.store.delete(key);
     }
 
     Ok(())
@@ -52,12 +51,12 @@ pub fn set_specific(key: TlsKey, data: Option<NonNull<()>>) -> Result<(), OsErro
 
 #[unsafe(export_name = "eva_rt_tls_get_specific")]
 pub fn get_specific(key: TlsKey) -> Option<NonNull<()>> {
-    rt::current_raw().local_store.get(key)
+    rt::local_raw().store.get(key)
 }
 
 #[derive(Debug)]
 struct KeyNode {
-    link: PauseCell<linked_list::Link<Self>>,
+    link: linked_list::Link<Self>,
     key: TlsKey,
     data: NonNull<()>,
 }
@@ -67,13 +66,11 @@ struct KeyNodeAdapter;
 impl linked_list::Adapter for KeyNodeAdapter {
     type Ptr = Box<KeyNode>;
     type Value = KeyNode;
+    type Link = linked_list::Link<KeyNode>;
 
-    unsafe fn raw_to_link(
-        &self,
-        raw: NonNull<Self::Value>,
-    ) -> NonNull<linked_list::Link<Self::Value>> {
+    unsafe fn raw_to_link(&self, raw: NonNull<Self::Value>) -> NonNull<Self::Link> {
         unsafe {
-            let ptr = ptr::addr_of_mut!(*(*raw.as_ptr()).link.get_mut());
+            let ptr = ptr::addr_of_mut!((*raw.as_ptr()).link);
             NonNull::new_unchecked(ptr)
         }
     }
@@ -86,6 +83,8 @@ impl linked_list::Adapter for KeyNodeAdapter {
         unsafe { NonNull::new_unchecked(Box::into_raw(ptr)) }
     }
 }
+
+unsafe impl linked_list::OwningAdapter for KeyNodeAdapter {}
 
 #[derive(Debug)]
 pub(super) struct LocalStore {
@@ -119,7 +118,7 @@ impl LocalStore {
             node.data = data;
         } else {
             list.push_back(Box::new(KeyNode {
-                link: PauseCell::new(linked_list::Link::unlinked()),
+                link: linked_list::Link::unlinked(),
                 key,
                 data,
             }));

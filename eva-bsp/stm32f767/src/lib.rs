@@ -434,7 +434,7 @@ impl port::Impl for PortabilityImpl {
             eva_pac::SCB
                 .icsr()
                 .write(eva_pac::scb::IcsrBits::default().set_pendsvset(true));
-        
+
             // This is required, to immediately flush the pending interrupt
             asm!("dsb", options(nostack, preserves_flags));
         }

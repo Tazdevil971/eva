@@ -1,7 +1,7 @@
 #![no_std]
 use core::alloc::Layout;
 use core::arch::{asm, naked_asm};
-use core::ffi::{c_int, c_ulong, c_void};
+use core::ffi::{c_int, c_void};
 use core::mem::{self, offset_of};
 use core::ptr::{self, addr_of_mut};
 use core::time::Duration;
@@ -19,7 +19,6 @@ compile_error!("only x86_64 is supported!");
 static mut GLOBAL_TIMER: __kernel_timer_t = 0;
 
 const SCHEDULER_TICK_SIGNUM: c_int = SIGRTMIN as c_int + 0;
-const TIMER_TICK_SIGNUM: c_int = SIGRTMIN as c_int + 1;
 
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
@@ -103,29 +102,12 @@ unsafe extern "C" fn init_stage1() {
         }
     }
 
-    // Install timer tick signal
-    {
-        unsafe {
-            let mut mask = mem::zeroed();
-            sigaddset(&mut mask, SCHEDULER_TICK_SIGNUM);
-
-            let new = kernel_sigaction {
-                sa_handler_kernel: Some(timer_tick),
-                sa_restorer: Some(restorer),
-                sa_mask: mask,
-                sa_flags: (SA_RESTORER | SA_ONSTACK | SA_RESTART) as _,
-            };
-
-            sys_sigaction(TIMER_TICK_SIGNUM, &new, ptr::null_mut());
-        }
-    }
-
     // Initialize the preemption timer
     {
         unsafe {
             let mut event: sigevent = mem::zeroed();
             event.sigev_notify = SIGEV_SIGNAL as _;
-            event.sigev_signo = TIMER_TICK_SIGNUM;
+            event.sigev_signo = SCHEDULER_TICK_SIGNUM;
 
             sys_timer_create(
                 CLOCK_THREAD_CPUTIME_ID as _,
@@ -176,13 +158,6 @@ unsafe extern "C" fn restorer() {
         ",
         const linux_raw_sys::general::__NR_rt_sigreturn
     )
-}
-
-fn sigaddset(set: &mut kernel_sigset_t, signo: c_int) -> c_int {
-    let word = (signo as usize - 1) / (mem::size_of::<c_ulong>() * 8);
-    let mask = 1 << ((signo as usize - 1) % (mem::size_of::<c_ulong>() * 8));
-    set.sig[word] |= mask;
-    0
 }
 
 #[inline(always)]
@@ -570,12 +545,5 @@ unsafe extern "C" fn scheduler_tick(_sig: c_int, _info: *mut siginfo, ucontext: 
             (*old_ctx).save_from(ucontext);
             (*SWITCHCTX).restore_to(ucontext);
         }
-    }
-}
-
-unsafe extern "C" fn timer_tick(_sig: c_int) {
-    // Trigger an immediate yield
-    unsafe {
-        sys_kill(0, SCHEDULER_TICK_SIGNUM);
     }
 }
