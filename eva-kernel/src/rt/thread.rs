@@ -119,7 +119,7 @@ impl ThreadLocal {
     }
 
     pub unsafe fn get(&self) -> &'static ThreadLocalInner {
-        unsafe { self.0.get().as_ref().unwrap() }
+        unsafe { self.0.get().as_ref().unwrap_unchecked() }
     }
 }
 

@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 use core::ptr;
 
 use crate::rt::pause::{PauseCell, PauseToken, with_pause};
@@ -8,11 +8,11 @@ use eva_utils::linked_list::LinkedList;
 
 const IDLE_STACK: usize = 4096;
 
-static TO_DESTROY: PauseCell<RefCell<LinkedList<ThreadListAdapter>>> =
-    PauseCell::ref_cell(LinkedList::new(ThreadListAdapter));
+static TO_DESTROY: PauseCell<UnsafeCell<LinkedList<ThreadListAdapter>>> =
+    PauseCell::unsafe_cell(LinkedList::new(ThreadListAdapter));
 
 pub fn defer_thread_destroy_paused(token: PauseToken, thread: ThreadPtr) {
-    TO_DESTROY.borrow_ref_mut(token).push_back(thread);
+    unsafe { TO_DESTROY.as_mut_unchecked(token).push_back(thread); }
 }
 
 extern "C" fn idle_task(_: *mut (), _: *mut (), _: *mut (), _: *mut ()) -> ! {
@@ -24,7 +24,7 @@ extern "C" fn idle_task(_: *mut (), _: *mut (), _: *mut (), _: *mut ()) -> ! {
 
     loop {
         // Otherwise run "idle" tasks
-        let thread = with_pause(|token| TO_DESTROY.borrow_ref_mut(token).pop_back());
+        let thread = with_pause(|token| unsafe { TO_DESTROY.as_mut_unchecked(token).pop_back() });
 
         if let Some(thread) = thread {
             unsafe {

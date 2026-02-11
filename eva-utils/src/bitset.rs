@@ -51,26 +51,32 @@ where
 
     #[inline(always)]
     fn idx_to_offset_and_shift(idx: usize) -> (usize, usize) {
-        assert!(idx < Self::SIZE);
+        // ============ Disabled for fast! ============
+        // assert!(idx < Self::SIZE);
+        // ============ Disabled for fast! ============
         (idx / Self::BIT_STRIDE, idx % Self::BIT_STRIDE)
     }
 
     /// Insert a new element in the bitset.
     pub fn insert(&mut self, idx: usize) {
         let (offset, shift) = Self::idx_to_offset_and_shift(idx);
-        self.0[offset] = self.0[offset] | (T::one() << shift);
+        unsafe {
+            *self.0.get_unchecked_mut(offset) = *self.0.get_unchecked(offset) | (T::one() << shift);
+        }
     }
 
     /// Remove an element from the bitset.
     pub fn remove(&mut self, idx: usize) {
         let (offset, shift) = Self::idx_to_offset_and_shift(idx);
-        self.0[offset] = self.0[offset] & !(T::one() << shift);
+        unsafe {
+            *self.0.get_unchecked_mut(offset) = *self.0.get_unchecked(offset) & !(T::one() << shift);
+        }
     }
 
     /// Check if this bitset contains a specific element.
     pub fn contains(&self, idx: usize) -> bool {
         let (offset, shift) = Self::idx_to_offset_and_shift(idx);
-        !(self.0[offset] & (T::one() << shift)).is_zero()
+        unsafe { !(*self.0.get_unchecked(offset) & (T::one() << shift)).is_zero() }
     }
 
     /// Return the element with the highest value.

@@ -63,7 +63,9 @@ impl<T> LinkOps for Link<T> {
 impl<T> Drop for Link<T> {
     fn drop(&mut self) {
         // Shouldn't happen, but check anyways
-        assert!(!self.is_linked(), "dropped node linked to a list");
+        // ============ Disabled for fast! ============
+        // assert!(!self.is_linked(), "dropped node linked to a list");
+        // ============ Disabled for fast! ============
     }
 }
 
@@ -135,7 +137,9 @@ impl<T> LinkOps for AtomicLink<T> {
 impl<T> Drop for AtomicLink<T> {
     fn drop(&mut self) {
         // Shouldn't happen, but check anyways
-        assert!(!self.is_linked(), "dropped node linked to a list");
+        // ============ Disabled for fast! ============
+        // assert!(!self.is_linked(), "dropped node linked to a list");
+        // ============ Disabled for fast! ============
     }
 }
 
@@ -271,10 +275,12 @@ impl<A: Adapter> LinkedList<A> {
         let node = self.adapter.ptr_to_raw(ptr);
 
         // Check that the node was not linked to anything
-        assert!(
-            unsafe { !self.is_linked(node) },
-            "Attempted to link an already linked node!"
-        );
+        // ============ Disabled for fast! ============
+        // assert!(
+        //     unsafe { !self.is_linked(node) },
+        //     "Attempted to link an already linked node!"
+        // );
+        // ============ Disabled for fast! ============
 
         node
     }

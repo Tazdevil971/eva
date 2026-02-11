@@ -135,11 +135,11 @@ impl<T> PauseCell<UnsafeCell<T>> {
     }
 
     pub const unsafe fn as_ref_unchecked<'a>(&'a self, token: PauseToken<'a>) -> &'a T {
-        unsafe { self.borrow(token).get().as_ref().unwrap() }
+        unsafe { self.borrow(token).get().as_ref().unwrap_unchecked() }
     }
 
     pub const unsafe fn as_mut_unchecked<'a>(&'a self, token: PauseToken<'a>) -> &'a mut T {
-        unsafe { self.borrow(token).get().as_mut().unwrap() }
+        unsafe { self.borrow(token).get().as_mut().unwrap_unchecked() }
     }
 }
 

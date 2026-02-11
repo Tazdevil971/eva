@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use core::cell::RefCell;
+use core::cell::UnsafeCell;
 use core::ptr::{self, NonNull};
 
 use crate::rt;
@@ -88,22 +88,26 @@ unsafe impl linked_list::OwningAdapter for KeyNodeAdapter {}
 
 #[derive(Debug)]
 pub(super) struct LocalStore {
-    list: RefCell<LinkedList<KeyNodeAdapter>>,
+    list: UnsafeCell<LinkedList<KeyNodeAdapter>>,
 }
 
 impl LocalStore {
     pub const fn new() -> Self {
         Self {
-            list: RefCell::new(LinkedList::new(KeyNodeAdapter)),
+            list: UnsafeCell::new(LinkedList::new(KeyNodeAdapter)),
         }
     }
 
     pub fn get(&self, key: TlsKey) -> Option<NonNull<()>> {
-        self.list
-            .borrow()
-            .iter()
-            .find(|node| node.key == key)
-            .map(|node| node.data)
+        unsafe {
+            self.list
+                .get()
+                .as_mut()
+                .unwrap_unchecked()
+                .iter()
+                .find(|node| node.key == key)
+                .map(|node| node.data)
+        }
     }
 
     pub fn set(&self, key: TlsKey, data: NonNull<()>) {
@@ -112,7 +116,7 @@ impl LocalStore {
             return;
         }
 
-        let mut list = self.list.borrow_mut();
+        let list = unsafe { self.list.get().as_mut().unwrap_unchecked() };
         let node = list.iter_mut().find(|node| node.key == key);
         if let Some(node) = node {
             node.data = data;
@@ -126,7 +130,7 @@ impl LocalStore {
     }
 
     pub fn delete(&self, key: TlsKey) {
-        let mut list = self.list.borrow_mut();
+        let list = unsafe { self.list.get().as_mut().unwrap_unchecked() };
         let mut cursor = list.cursor_front_mut();
         while let Some(value) = cursor.current() {
             if value.key == key {
@@ -139,7 +143,7 @@ impl LocalStore {
     }
 
     fn pop_node(&self) -> Option<Box<KeyNode>> {
-        self.list.borrow_mut().pop_front()
+        unsafe { self.list.get().as_mut().unwrap_unchecked().pop_front() }
     }
 
     pub fn run_dtors(&self) {
