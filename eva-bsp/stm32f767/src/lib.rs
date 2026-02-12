@@ -349,6 +349,7 @@ struct SwitchCtx {
     r10: u32,
     r11: u32,
     handler_lr: u32,
+    s: [u32; 16]
 }
 
 #[repr(C)]
@@ -411,6 +412,7 @@ impl port::Impl for PortabilityImpl {
                 r10: 0,
                 r11: 0,
                 handler_lr: 0xffff_fffd,
+                s: [0; 16]
             });
         }
     }
@@ -489,6 +491,7 @@ static mut NULL_SWITCHCTX: SwitchCtx = SwitchCtx {
     r10: 0,
     r11: 0,
     handler_lr: 0,
+    s: [0; 16]
 };
 
 static mut SWITCHCTX: *mut SwitchCtx = addr_of_mut!(NULL_SWITCHCTX);
@@ -503,7 +506,10 @@ unsafe extern "C" fn PendSV() {
         ldr r0, [r0]
         mrs r1, psp
         stmia r0, {{r1,r4-r11,lr}}
-        dmb
+        lsls r2, lr, #27
+        bmi 0f
+        vstmia.32 r0, {{s16-s31}}
+        0: dmb
         ",
         // Call into the scheduler
         "
@@ -514,7 +520,10 @@ unsafe extern "C" fn PendSV() {
         ldr r0, ={switchctx}
         ldr r0, [r0]
         ldmia r0, {{r1,r4-r11,lr}}
-        msr psp, r1
+        lsls   r2,  lr,  #27
+        bmi    0f
+        vldmia.32 r0, {{s16-s31}}
+        0: msr psp, r1
         bx lr
         ",
         switchctx = sym SWITCHCTX,
