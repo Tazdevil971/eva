@@ -349,7 +349,7 @@ struct SwitchCtx {
     r10: u32,
     r11: u32,
     handler_lr: u32,
-    s: [u32; 16]
+    s: [u32; 16],
 }
 
 #[repr(C)]
@@ -412,7 +412,7 @@ impl port::Impl for PortabilityImpl {
                 r10: 0,
                 r11: 0,
                 handler_lr: 0xffff_fffd,
-                s: [0; 16]
+                s: [0; 16],
             });
         }
     }
@@ -474,7 +474,7 @@ impl port::Impl for PortabilityImpl {
 
     fn get_time() -> Duration {
         // TODO: This could be more accurate!
-        Duration::from_millis(MS.load(Ordering::SeqCst) as _)
+        Duration::from_millis(MS.load(Ordering::Relaxed) as _)
     }
 }
 
@@ -491,7 +491,7 @@ static mut NULL_SWITCHCTX: SwitchCtx = SwitchCtx {
     r10: 0,
     r11: 0,
     handler_lr: 0,
-    s: [0; 16]
+    s: [0; 16],
 };
 
 static mut SWITCHCTX: *mut SwitchCtx = addr_of_mut!(NULL_SWITCHCTX);
@@ -500,16 +500,21 @@ static mut SWITCHCTX: *mut SwitchCtx = addr_of_mut!(NULL_SWITCHCTX);
 #[unsafe(no_mangle)]
 unsafe extern "C" fn PendSV() {
     naked_asm!(
+        // FIXME: Workaround for llvm-project#98673 and llvm-project#97685
+        // Essentially LLVM forgets about what target it is compiling and we need to specify it here too
+        "
+        .cpu cortex-m7
+        ",
         // Save current context
         "
         ldr r0, ={switchctx}
         ldr r0, [r0]
         mrs r1, psp
         stmia r0, {{r1,r4-r11,lr}}
-        lsls r2, lr, #27
-        bmi 0f
-        vstmia.32 r0, {{s16-s31}}
-        0: dmb
+        tst lr, #0x10
+        it eq
+        vstmiaeq r0, {{s16-s31}}
+        dmb
         ",
         // Call into the scheduler
         "
@@ -520,10 +525,10 @@ unsafe extern "C" fn PendSV() {
         ldr r0, ={switchctx}
         ldr r0, [r0]
         ldmia r0, {{r1,r4-r11,lr}}
-        lsls   r2,  lr,  #27
-        bmi    0f
-        vldmia.32 r0, {{s16-s31}}
-        0: msr psp, r1
+        tst lr, #0x10
+        it eq
+        vldmiaeq r0, {{s16-s31}}
+        msr psp, r1
         bx lr
         ",
         switchctx = sym SWITCHCTX,
@@ -541,7 +546,7 @@ static MS: AtomicU32 = AtomicU32::new(0);
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn SysTick() {
-    MS.fetch_add(10, Ordering::SeqCst);
+    MS.fetch_add(10, Ordering::Relaxed);
 
     // Pend a yield
     unsafe {
