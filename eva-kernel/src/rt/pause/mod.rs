@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering, compiler_fence};
 
 use crate::rt;
 
@@ -22,6 +22,7 @@ pub fn is_paused() -> bool {
 /// Force a scheduler pause.
 #[unsafe(export_name = "eva_rt_pause")]
 pub fn pause() {
+    compiler_fence(Ordering::SeqCst);
     // TODO(davide.mor): Review memory ordering
     PAUSED.store(true, Ordering::SeqCst);
 }
@@ -39,6 +40,8 @@ pub unsafe fn unpause() {
         // We have a pended yield
         rt::yield_now();
     }
+
+    compiler_fence(Ordering::SeqCst);
 }
 
 /// Pend a yield to happen as soon as the pause is ended.
@@ -56,6 +59,7 @@ pub fn try_pause() -> bool {
     if PAUSED.load(Ordering::SeqCst) {
         false
     } else {
+        compiler_fence(Ordering::SeqCst);
         // TODO(davide.mor): Review memory ordering
         PAUSED.store(true, Ordering::SeqCst);
         true
@@ -80,6 +84,7 @@ pub unsafe fn try_unpause() -> bool {
             rt::yield_now();
         }
 
+        compiler_fence(Ordering::SeqCst);
         true
     }
 }
@@ -102,7 +107,6 @@ where
         // TODO(davide.mor): Review memory ordering
         PEND.store(false, Ordering::SeqCst);
 
-        // We want
         defer! {
             // TODO(davide.mor): Review memory ordering
             PAUSED.store(false, Ordering::SeqCst);
