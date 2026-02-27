@@ -2,7 +2,7 @@
 EVA_TARGET_CHIP = "stm32f767zi"
 
 [build]
-target = "../stm32f767.json"
+target = "../thumbv7em-eva-eabihf.json"
 
 [target.thumbv7em-eva-eabihf]
 runner = "probe-rs run --chip STM32F767ZITx"
