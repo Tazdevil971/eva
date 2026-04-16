@@ -156,6 +156,91 @@ unsafe extern "C" fn init_stage0() {
 
         // Reset to zero all interrupts
         eva_pac::RCC.cir().write(Default::default());
+
+        // Now configure SysClk to full speed
+        
+        // Enable Power Control clock
+        eva_pac::RCC.apb1enr().update(|reg| reg.set_pwren(true));
+        // Config Voltage Scale 1
+        eva_pac::PWR.cr1().update(|reg| {
+            use eva_pac::pwr::*;
+            reg.set_vos(VosVal::Scale1)
+        });
+        // Enable HSE
+        eva_pac::RCC.cr().update(|reg| reg.set_hseon(true));
+
+        // Wait till HSE is ready
+        while !eva_pac::RCC.cr().read().hserdy() {}
+
+        // Enable Power Control clock
+        eva_pac::RCC.apb1enr().update(|reg| reg.set_pwren(true));
+        // Config Voltage Scale 1
+        eva_pac::PWR.cr1().update(|reg| {
+            use eva_pac::pwr::*;
+            reg.set_vos(VosVal::Scale1)
+        });
+        
+        // Enable Over Drive to reach the 216MHz frequency
+        // Enable ODEN
+        eva_pac::PWR.cr1().update(|reg| reg.set_oden(true));
+        
+        // Wait till ODR is ready
+        while !eva_pac::PWR.csr1().read().odrdy() {}
+        
+        // Enable DSW
+        eva_pac::PWR.cr1().update(|reg| reg.set_odswen(true));
+        // Wait till ODSW is ready
+        while !eva_pac::PWR.csr1().read().odswrdy() {}
+        
+        // HCLK = SYSCLK / 1
+        eva_pac::RCC.cfgr().update(|reg| {
+            use eva_pac::rcc::*;
+            reg.set_hpre(HpreVal::Div1)
+        });
+        // PLCLK2 = HCLK / 2
+        eva_pac::RCC.cfgr().update(|reg| {
+            use eva_pac::rcc::*;
+            reg.set_ppre2(PpreVal::Div2)
+        });
+        // PLCLK1 = HCLK / 4
+        eva_pac::RCC.cfgr().update(|reg| {
+            use eva_pac::rcc::*;
+            reg.set_ppre1(PpreVal::Div4)
+        });
+        
+        // Configure the main PLL
+        eva_pac::RCC.pllcfgr().write({
+            use eva_pac::rcc::*;
+            PllcfgrBits::default()
+                .set_pllsrc(PllsrcVal::Hse)
+                .set_pllm(PllmVal::Div25)
+                .set_pllq(PllqVal::Div9)
+                .set_pllr(PllrVal::Div7)
+                .set_plln(PllnVal::Mul432)
+                .set_pllp(PllpVal::Div2)
+        });
+        
+        // Enable the main PLL
+        eva_pac::RCC.cr().update(|reg| reg.set_pllon(true));
+        
+        // Wait till the PLL is ready
+        while !eva_pac::RCC.cr().read().pllrdy() {}
+    
+        // Configure flash prefetch, instruction cache, data cache and wait state
+        eva_pac::FLASH.acr().update(|reg| {
+            use eva_pac::flash::*;
+            reg.set_latency(LatencyVal::Ws7)
+        });
+        
+        eva_pac::RCC.cfgr().update(|reg| {
+            use eva_pac::rcc::*;
+            reg.set_sw(SwVal::Pll1P)
+        });
+        
+        {
+            use eva_pac::rcc::*;
+            while eva_pac::RCC.cfgr().read().sws() != SwVal::Pll1P {}
+        }
     }
 }
 
