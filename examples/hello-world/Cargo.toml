@@ -7,6 +7,7 @@ authors = ["Davide Mor <tazdevil971@gmail.com>"]
 [dependencies]
 eva-kernel = { workspace = true }
 eva-abi = { workspace = true }
+eva-pac = { workspace = true }
 
 # Hack to not have to switch BSP target every time
 [target.'cfg(target_arch = "x86_64")'.dependencies]
