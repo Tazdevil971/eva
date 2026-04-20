@@ -1,6 +1,6 @@
 {
     "name": "cm7",
-    "description": "Cortex-m4",
+    "description": "Cortex-m7",
     "peripherals": [
         {
             "name": "SYST",
@@ -8,6 +8,13 @@
             "module": "SYST",
             "block_name": "SYST",
             "address": 3758153744
+        },
+        {
+            "name": "NVIC",
+            "description": "Nested Vector Interrupt Controller",
+            "module": "NVIC",
+            "block_name": "NVIC",
+            "address": 3758153984
         },
         {
             "name": "SCB",
@@ -19,13 +26,16 @@
     ],
     "imports": [
         {
-            "name": "SCB"
+            "name": "CM_REGS"
         },
         {
             "name": "SYST"
         },
         {
-            "name": "CM_REGS"
+            "name": "NVIC"
+        },
+        {
+            "name": "SCB"
         }
     ],
     "cm_ext": {

@@ -103,6 +103,97 @@
                     "byte_offset": 56,
                     "access": "rw",
                     "bit_size": 32
+                },
+                {
+                    "name": "CLIDR",
+                    "description": "Cache level ID register",
+                    "byte_offset": 120,
+                    "access": "ro",
+                    "bit_size": 32    
+                },
+                {
+                    "name": "CTR",
+                    "description": "Cache type register",
+                    "byte_offset": 124,
+                    "access": "ro",
+                    "bitfield_name": "CTR"
+                },
+                {
+                    "name": "CCSIDR",
+                    "description": "Cache size ID register",
+                    "byte_offset": 128,
+                    "access": "ro",
+                    "bitfield_name": "CCSIDR"
+                },
+                {
+                    "name": "CSSELR",
+                    "description": "Cache size selection register",
+                    "byte_offset": 132,
+                    "access": "rw",
+                    "bitfield_name": "CSSELR"
+                },
+                {
+                    "name": "ICIALLU",
+                    "description": "Instruction cache invalidate all to the PoU",
+                    "byte_offset": 592,
+                    "access": "wo",
+                    "bit_size": 32
+                },
+                {
+                    "name": "ICIMVAU",
+                    "description": "Instruction cache invalidate by address to the PoU",
+                    "byte_offset": 600,
+                    "access": "wo",
+                    "bit_size": 32
+                },
+                {
+                    "name": "DCIMVAC",
+                    "description": "Data cache invalidate by address to the PoC",
+                    "byte_offset": 604,
+                    "access": "wo",
+                    "bit_size": 32
+                },
+                {
+                    "name": "DCISW",
+                    "description": "Data cache invalidate by set/way",
+                    "byte_offset": 608,
+                    "access": "wo",
+                    "bitfield_name": "DCSW"
+                },
+                {
+                    "name": "DCCMVAU",
+                    "description": "Data cache by address to the PoU",
+                    "byte_offset": 612,
+                    "access": "wo",
+                    "bit_size": 32
+                },
+                {
+                    "name": "DCCMVAC",
+                    "description": "Data cache clean by address to the PoC",
+                    "byte_offset": 616,
+                    "access": "wo",
+                    "bit_size": 32
+                },
+                {
+                    "name": "DCCSW",
+                    "description": "Data cache clean by set/way",
+                    "byte_offset": 620,
+                    "access": "wo",
+                    "bitfield_name": "DCSW"
+                },
+                {
+                    "name": "DCCIMVAC",
+                    "description": "Data cache clean and invalidate by address to the PoC",
+                    "byte_offset": 624,
+                    "access": "wo",
+                    "bit_size": 32
+                },
+                {
+                    "name": "DCCISW",
+                    "description": "Data cache clean and invalidate by set/way",
+                    "byte_offset": 628,
+                    "access": "wo",
+                    "bitfield_name": "DCSW"
                 }
             ]
         }
@@ -607,6 +698,130 @@
                     "description": "Indicates a BusFault on a vector table read during exception processing",
                     "bit_offset": 1,
                     "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "CTR",
+            "description": "Cache type register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "Format",
+                    "description": "Register format",
+                    "bit_offset": 29,
+                    "bit_size": 3
+                },
+                {
+                    "name": "CWG",
+                    "description": "Cache Writeback Granule",
+                    "bit_offset": 24,
+                    "bit_size": 4
+                },
+                {
+                    "name": "ERG",
+                    "description": "Exclusives Reservation Granule",
+                    "bit_offset": 20,
+                    "bit_size": 4
+                },
+                {
+                    "name": "DMinLine",
+                    "description": "Smallest cache line of all the data and unified caches under the core control",
+                    "bit_offset": 16,
+                    "bit_size": 4
+                },
+                {
+                    "name": "IMinLine",
+                    "description": "Smallest cache line of all the instruction caches under the control of the processor",
+                    "bit_offset": 0,
+                    "bit_size": 4
+                }
+            ]
+        },
+        {
+            "name": "CCSIDR",
+            "description": "Cache size ID register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "WT",
+                    "description": "Indicates support available for Write-Through",
+                    "bit_offset": 31,
+                    "bit_size": 1
+                },
+                {
+                    "name": "WB",
+                    "description": "Indicates support available for Write-Back",
+                    "bit_offset": 30,
+                    "bit_size": 1
+                },
+                {
+                    "name": "RA",
+                    "description": "Indicates support available for read allocation",
+                    "bit_offset": 29,
+                    "bit_size": 1
+                },
+                {
+                    "name": "WA",
+                    "description": "Indicates support available for write allocation",
+                    "bit_offset": 28,
+                    "bit_size": 1
+                },
+                {
+                    "name": "NumSet",
+                    "description": "Indicates the number of sets as",
+                    "bit_offset": 13,
+                    "bit_size": 14
+                },
+                {
+                    "name": "Assoc",
+                    "description": "INdicates the number of ways as",
+                    "bit_offset": 3,
+                    "bit_size": 10
+                },
+                {
+                    "name": "LineSize",
+                    "description": "Indicates the number of words in each cache line",
+                    "bit_offset": 0,
+                    "bit_size": 3
+                }
+            ]
+        },
+        {
+            "name": "CSSELR",
+            "description": "Cache size selection register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "Level",
+                    "description": "Identifies the cache level selected",
+                    "bit_offset": 1,
+                    "bit_size": 3
+                },
+                {
+                    "name": "InD",
+                    "description": "Enables selection of insutrction or data cache",
+                    "bit_offset": 0,
+                    "bit_size": 1
+                }
+            ]
+        },
+        {
+            "name": "DCSW",
+            "description": "Data cache operations by set-way",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "Way",
+                    "description": "Way that operation applies to",
+                    "bit_offset": 30,
+                    "bit_size": 2
+                },
+                {
+                    "name": "Set",
+                    "description": "Set/index that operation applies to",
+                    "bit_offset": 5,
+                    "bit_size": 9
                 }
             ]
         }

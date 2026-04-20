@@ -28,24 +28,12 @@ impl RawMutex {
         }
     }
 
-    pub fn try_lock_paused(&self, _token: PauseToken) -> bool {
-        // TODO(davide.mor): Review memory orderings
-        let old = self.locked.load(Ordering::Relaxed);
-        if old {
-            // The lock is unlocked, lock it now
-            self.locked.store(true, Ordering::Relaxed);
-        }
-
-        !old
-    }
-
     pub fn lock_paused(&self, token: PauseToken) {
-        // First try to lock the mutex
-        if self.try_lock_paused(token) {
+        // This is required because we could have a context switch just before the pause that releases the mutex
+        if self.try_lock() {
             return;
         }
 
-        // The mutex is locked, fallback to a wakeup
         self.wait_list.with_wakeup(token, |_, wakeup| {
             loop {
                 rt::suspend_and_yield_paused(token);
@@ -67,6 +55,11 @@ impl RawMutex {
 
     #[unsafe(export_name = "eva_rt_sync_mutex_lock")]
     pub fn lock(&self) {
+        // Fast path
+        if self.try_lock() {
+            return;
+        }
+
         with_pause(|token| {
             self.lock_paused(token);
         });
@@ -74,7 +67,10 @@ impl RawMutex {
 
     #[unsafe(export_name = "eva_rt_sync_mutex_try_lock")]
     pub fn try_lock(&self) -> bool {
-        with_pause(|token| self.try_lock_paused(token))
+        // TODO(davide.mor): Review memory orderings
+        self.locked
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
     }
 
     #[unsafe(export_name = "eva_rt_sync_mutex_unlock")]
@@ -98,13 +94,17 @@ impl RawMutex {
 
     #[unsafe(export_name = "eva_rt_sync_mutex_try_lock_until")]
     pub fn try_lock_until(&self, timeout: Duration) -> bool {
+        // Fast path
+        if self.try_lock() {
+            return true;
+        }
+
         with_pause(|token| {
-            // First try to lock the mutex
-            if self.try_lock_paused(token) {
+            // This is required because we could have a context switch just before the pause that releases the mutex
+            if self.try_lock() {
                 return true;
             }
 
-            // The mutex is locked, fallback to a wakeup
             rt::time::with_timed_wakeup(token, timeout, |token, wakeup| {
                 self.wait_list.with_wakeup(token, |token, wakeup2| {
                     loop {

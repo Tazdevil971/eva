@@ -1,0 +1,186 @@
+{
+    "name": "NVIC",
+    "description": "Nested Vector Interrupt Controller",
+    "blocks": [
+        {
+            "name": "NVIC",
+            "description": "Nested Vector Interrupt Controller",
+            "fields": [
+                {
+                    "name": "ISER",
+                    "description": "Interrupt set-enable registers",
+                    "byte_offset": 0,
+                    "array": {
+                        "len": 8,
+                        "stride": 4
+                    },
+                    "access": "rw",
+                    "bitfield_name": "ISER"
+                },
+                {
+                    "name": "ICER",
+                    "description": "Interrupt clear-enable registers",
+                    "byte_offset": 128,
+                    "array": {
+                        "len": 8,
+                        "stride": 4
+                    },
+                    "access": "rw",
+                    "bitfield_name": "ICER"
+                },
+                {
+                    "name": "ISPR",
+                    "description": "Interrupt set-pending registers",
+                    "byte_offset": 256,
+                    "array": {
+                        "len": 8,
+                        "stride": 4
+                    },
+                    "access": "rw",
+                    "bitfield_name": "ISPR"
+                },
+                {
+                    "name": "ICPR",
+                    "description": "Interrupt clear-pending registers",
+                    "byte_offset": 384,
+                    "array": {
+                        "len": 8,
+                        "stride": 4
+                    },
+                    "access": "rw",
+                    "bitfield_name": "ICPR"
+                },
+                {
+                    "name": "IABR",
+                    "description": "Interrupt active bit registers",
+                    "byte_offset": 512,
+                    "array": {
+                        "len": 8,
+                        "stride": 4
+                    },
+                    "access": "rw",
+                    "bitfield_name": "IABR"
+                },
+                {
+                    "name": "IP",
+                    "description": "Interrupt priority registers",
+                    "byte_offset": 768,
+                    "array": {
+                        "len": 240,
+                        "stride": 1
+                    },
+                    "access": "rw",
+                    "bit_size": 8
+                },
+                {
+                    "name": "STIR",
+                    "description": "Software trigger interrupt register",
+                    "byte_offset": 3584,
+                    "access": "wo",
+                    "bitfield_name": "STIR"
+                }
+            ]
+        }
+    ],
+    "bitfields": [
+        {
+            "name": "ISER",
+            "description": "Interrupt set-enable registers",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "SETENA",
+                    "description": "Interrupt set-enable bits",
+                    "bit_offset": 0,
+                    "bit_size": 1,
+                    "array": {
+                        "len": 32,
+                        "stride": 1
+                    }
+                }
+            ]
+        },
+        {
+            "name": "ICER",
+            "description": "Interrupt clear-enable registers",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "CLRENA",
+                    "description": "Interrupt clear-enable bits",
+                    "bit_offset": 0,
+                    "bit_size": 1,
+                    "array": {
+                        "len": 32,
+                        "stride": 1
+                    }
+                }
+            ]
+        },
+        {
+            "name": "ISPR",
+            "description": "Interrupt set-pending registers",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "SETPEND",
+                    "description": "Interrupt set-pending bits",
+                    "bit_offset": 0,
+                    "bit_size": 1,
+                    "array": {
+                        "len": 32,
+                        "stride": 1
+                    }
+                }
+            ]
+        },
+        {
+            "name": "ICPR",
+            "description": "Interrupt clear-pending registers",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "CLRPEND",
+                    "description": "Interrupt clear-pending bits",
+                    "bit_offset": 0,
+                    "bit_size": 1,
+                    "array": {
+                        "len": 32,
+                        "stride": 1
+                    }
+                }
+            ]
+        },
+        {
+            "name": "IABR",
+            "description": "Interrupt active bit registers",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "ACTIVE",
+                    "description": "Interrupt active flags",
+                    "bit_offset": 0,
+                    "bit_size": 1,
+                    "array": {
+                        "len": 32,
+                        "stride": 1
+                    }
+                }
+            ]
+        },
+        {
+            "name": "STIR",
+            "description": "Software trigger interrupt register",
+            "bit_size": 32,
+            "fields": [
+                {
+                    "name": "INTID",
+                    "description": "Interrupt ID",
+                    "bit_offset": 0,
+                    "bit_size": 8
+                }
+            ]
+        }
+    ],
+    "enums": []
+}

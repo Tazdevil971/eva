@@ -10,7 +10,13 @@ members = [
     "examples/hello-world",
     "examples/sync-queue",
     "examples/sync-queue-std",
-    "examples/sync-queue-c"
+    "examples/sync-queue-c",
+    "benches/yield",
+    "benches/condvar",
+    "benches/mutex-lock",
+    "benches/mutex-unlock",
+    "benches/mutex-uncont",
+    "benches/wake-from-irq",
 ]
 
 [workspace.dependencies]

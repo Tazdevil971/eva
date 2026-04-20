@@ -9,6 +9,66 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
+name = "bench-condvar"
+version = "0.1.0"
+dependencies = [
+ "eva-abi",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-pac",
+]
+
+[[package]]
+name = "bench-mutex-lock"
+version = "0.1.0"
+dependencies = [
+ "eva-abi",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-pac",
+]
+
+[[package]]
+name = "bench-mutex-uncont"
+version = "0.1.0"
+dependencies = [
+ "eva-abi",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-pac",
+]
+
+[[package]]
+name = "bench-mutex-unlock"
+version = "0.1.0"
+dependencies = [
+ "eva-abi",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-pac",
+]
+
+[[package]]
+name = "bench-wake-from-irq"
+version = "0.1.0"
+dependencies = [
+ "eva-abi",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-pac",
+]
+
+[[package]]
+name = "bench-yield"
+version = "0.1.0"
+dependencies = [
+ "eva-abi",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-pac",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -77,6 +137,7 @@ dependencies = [
  "eva-bsp-linux",
  "eva-bsp-stm32f767",
  "eva-kernel",
+ "eva-pac",
 ]
 
 [[package]]

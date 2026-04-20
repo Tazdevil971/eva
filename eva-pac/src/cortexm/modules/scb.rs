@@ -131,6 +131,110 @@ impl Scb {
             <utils::Reg<u32, utils::RW>>::from_ptr(ptr)
         }
     }
+    #[inline(always)]
+    #[doc = "Cache level ID register"]
+    pub const fn clidr(&self) -> utils::Reg<u32, utils::RO> {
+        unsafe {
+            let ptr = self.ptr.add(0x78);
+            <utils::Reg<u32, utils::RO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Cache type register"]
+    pub const fn ctr(&self) -> utils::Reg<CtrBits, utils::RO> {
+        unsafe {
+            let ptr = self.ptr.add(0x7c);
+            <utils::Reg<CtrBits, utils::RO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Cache size ID register"]
+    pub const fn ccsidr(&self) -> utils::Reg<CcsidrBits, utils::RO> {
+        unsafe {
+            let ptr = self.ptr.add(0x80);
+            <utils::Reg<CcsidrBits, utils::RO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Cache size selection register"]
+    pub const fn csselr(&self) -> utils::Reg<CsselrBits, utils::RW> {
+        unsafe {
+            let ptr = self.ptr.add(0x84);
+            <utils::Reg<CsselrBits, utils::RW>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Instruction cache invalidate all to the PoU"]
+    pub const fn iciallu(&self) -> utils::Reg<u32, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x250);
+            <utils::Reg<u32, utils::WO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Instruction cache invalidate by address to the PoU"]
+    pub const fn icimvau(&self) -> utils::Reg<u32, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x258);
+            <utils::Reg<u32, utils::WO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Data cache invalidate by address to the PoC"]
+    pub const fn dcimvac(&self) -> utils::Reg<u32, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x25c);
+            <utils::Reg<u32, utils::WO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Data cache invalidate by set/way"]
+    pub const fn dcisw(&self) -> utils::Reg<DcswBits, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x260);
+            <utils::Reg<DcswBits, utils::WO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Data cache by address to the PoU"]
+    pub const fn dccmvau(&self) -> utils::Reg<u32, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x264);
+            <utils::Reg<u32, utils::WO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Data cache clean by address to the PoC"]
+    pub const fn dccmvac(&self) -> utils::Reg<u32, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x268);
+            <utils::Reg<u32, utils::WO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Data cache clean by set/way"]
+    pub const fn dccsw(&self) -> utils::Reg<DcswBits, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x26c);
+            <utils::Reg<DcswBits, utils::WO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Data cache clean and invalidate by address to the PoC"]
+    pub const fn dccimvac(&self) -> utils::Reg<u32, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x270);
+            <utils::Reg<u32, utils::WO>>::from_ptr(ptr)
+        }
+    }
+    #[inline(always)]
+    #[doc = "Data cache clean and invalidate by set/way"]
+    pub const fn dccisw(&self) -> utils::Reg<DcswBits, utils::WO> {
+        unsafe {
+            let ptr = self.ptr.add(0x274);
+            <utils::Reg<DcswBits, utils::WO>>::from_ptr(ptr)
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
@@ -326,6 +430,111 @@ impl CcrBits {
     #[doc = "Always reads-as-one. It indicates branch prediction is enabled"]
     pub const fn bp(self) -> bool {
         ((self.bits >> 0x12) & 0x1) != 0
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+#[doc = "Cache size ID register"]
+pub struct CcsidrBits {
+    bits: u32,
+}
+impl Default for CcsidrBits {
+    fn default() -> Self {
+        unsafe { Self::from_bits_unchecked(0x0) }
+    }
+}
+impl CcsidrBits {
+    #[inline(always)]
+    pub const unsafe fn from_bits_unchecked(bits: u32) -> Self {
+        Self { bits }
+    }
+    #[inline(always)]
+    pub const fn to_bits(self) -> u32 {
+        self.bits
+    }
+    #[inline(always)]
+    #[doc = "Indicates the number of words in each cache line"]
+    pub const fn set_line_size(mut self, val: u8) -> Self {
+        self.bits &= !(0x7 << 0x0);
+        self.bits |= (val as u32 & 0x7) << 0x0;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Indicates the number of words in each cache line"]
+    pub const fn line_size(self) -> u8 {
+        ((self.bits >> 0x0) & 0x7) as _
+    }
+    #[inline(always)]
+    #[doc = "INdicates the number of ways as"]
+    pub const fn set_assoc(mut self, val: u16) -> Self {
+        self.bits &= !(0x3ff << 0x3);
+        self.bits |= (val as u32 & 0x3ff) << 0x3;
+        self
+    }
+    #[inline(always)]
+    #[doc = "INdicates the number of ways as"]
+    pub const fn assoc(self) -> u16 {
+        ((self.bits >> 0x3) & 0x3ff) as _
+    }
+    #[inline(always)]
+    #[doc = "Indicates the number of sets as"]
+    pub const fn set_num_set(mut self, val: u16) -> Self {
+        self.bits &= !(0x3fff << 0xd);
+        self.bits |= (val as u32 & 0x3fff) << 0xd;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Indicates the number of sets as"]
+    pub const fn num_set(self) -> u16 {
+        ((self.bits >> 0xd) & 0x3fff) as _
+    }
+    #[inline(always)]
+    #[doc = "Indicates support available for write allocation"]
+    pub const fn set_wa(mut self, val: bool) -> Self {
+        self.bits &= !(0x1 << 0x1c);
+        self.bits |= if val { 1 << 0x1c } else { 0 };
+        self
+    }
+    #[inline(always)]
+    #[doc = "Indicates support available for write allocation"]
+    pub const fn wa(self) -> bool {
+        ((self.bits >> 0x1c) & 0x1) != 0
+    }
+    #[inline(always)]
+    #[doc = "Indicates support available for read allocation"]
+    pub const fn set_ra(mut self, val: bool) -> Self {
+        self.bits &= !(0x1 << 0x1d);
+        self.bits |= if val { 1 << 0x1d } else { 0 };
+        self
+    }
+    #[inline(always)]
+    #[doc = "Indicates support available for read allocation"]
+    pub const fn ra(self) -> bool {
+        ((self.bits >> 0x1d) & 0x1) != 0
+    }
+    #[inline(always)]
+    #[doc = "Indicates support available for Write-Back"]
+    pub const fn set_wb(mut self, val: bool) -> Self {
+        self.bits &= !(0x1 << 0x1e);
+        self.bits |= if val { 1 << 0x1e } else { 0 };
+        self
+    }
+    #[inline(always)]
+    #[doc = "Indicates support available for Write-Back"]
+    pub const fn wb(self) -> bool {
+        ((self.bits >> 0x1e) & 0x1) != 0
+    }
+    #[inline(always)]
+    #[doc = "Indicates support available for Write-Through"]
+    pub const fn set_wt(mut self, val: bool) -> Self {
+        self.bits &= !(0x1 << 0x1f);
+        self.bits |= if val { 1 << 0x1f } else { 0 };
+        self
+    }
+    #[inline(always)]
+    #[doc = "Indicates support available for Write-Through"]
+    pub const fn wt(self) -> bool {
+        ((self.bits >> 0x1f) & 0x1) != 0
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -656,6 +865,177 @@ impl CpuidBits {
     #[doc = "Implementer code"]
     pub const fn implementer(self) -> u8 {
         ((self.bits >> 0x18) & 0xff) as _
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+#[doc = "Cache size selection register"]
+pub struct CsselrBits {
+    bits: u32,
+}
+impl Default for CsselrBits {
+    fn default() -> Self {
+        unsafe { Self::from_bits_unchecked(0x0) }
+    }
+}
+impl CsselrBits {
+    #[inline(always)]
+    pub const unsafe fn from_bits_unchecked(bits: u32) -> Self {
+        Self { bits }
+    }
+    #[inline(always)]
+    pub const fn to_bits(self) -> u32 {
+        self.bits
+    }
+    #[inline(always)]
+    #[doc = "Enables selection of insutrction or data cache"]
+    pub const fn set_in_d(mut self, val: bool) -> Self {
+        self.bits &= !(0x1 << 0x0);
+        self.bits |= if val { 1 << 0x0 } else { 0 };
+        self
+    }
+    #[inline(always)]
+    #[doc = "Enables selection of insutrction or data cache"]
+    pub const fn in_d(self) -> bool {
+        ((self.bits >> 0x0) & 0x1) != 0
+    }
+    #[inline(always)]
+    #[doc = "Identifies the cache level selected"]
+    pub const fn set_level(mut self, val: u8) -> Self {
+        self.bits &= !(0x7 << 0x1);
+        self.bits |= (val as u32 & 0x7) << 0x1;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Identifies the cache level selected"]
+    pub const fn level(self) -> u8 {
+        ((self.bits >> 0x1) & 0x7) as _
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+#[doc = "Cache type register"]
+pub struct CtrBits {
+    bits: u32,
+}
+impl Default for CtrBits {
+    fn default() -> Self {
+        unsafe { Self::from_bits_unchecked(0x0) }
+    }
+}
+impl CtrBits {
+    #[inline(always)]
+    pub const unsafe fn from_bits_unchecked(bits: u32) -> Self {
+        Self { bits }
+    }
+    #[inline(always)]
+    pub const fn to_bits(self) -> u32 {
+        self.bits
+    }
+    #[inline(always)]
+    #[doc = "Smallest cache line of all the instruction caches under the control of the processor"]
+    pub const fn set_i_min_line(mut self, val: u8) -> Self {
+        self.bits &= !(0xf << 0x0);
+        self.bits |= (val as u32 & 0xf) << 0x0;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Smallest cache line of all the instruction caches under the control of the processor"]
+    pub const fn i_min_line(self) -> u8 {
+        ((self.bits >> 0x0) & 0xf) as _
+    }
+    #[inline(always)]
+    #[doc = "Smallest cache line of all the data and unified caches under the core control"]
+    pub const fn set_d_min_line(mut self, val: u8) -> Self {
+        self.bits &= !(0xf << 0x10);
+        self.bits |= (val as u32 & 0xf) << 0x10;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Smallest cache line of all the data and unified caches under the core control"]
+    pub const fn d_min_line(self) -> u8 {
+        ((self.bits >> 0x10) & 0xf) as _
+    }
+    #[inline(always)]
+    #[doc = "Exclusives Reservation Granule"]
+    pub const fn set_erg(mut self, val: u8) -> Self {
+        self.bits &= !(0xf << 0x14);
+        self.bits |= (val as u32 & 0xf) << 0x14;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Exclusives Reservation Granule"]
+    pub const fn erg(self) -> u8 {
+        ((self.bits >> 0x14) & 0xf) as _
+    }
+    #[inline(always)]
+    #[doc = "Cache Writeback Granule"]
+    pub const fn set_cwg(mut self, val: u8) -> Self {
+        self.bits &= !(0xf << 0x18);
+        self.bits |= (val as u32 & 0xf) << 0x18;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Cache Writeback Granule"]
+    pub const fn cwg(self) -> u8 {
+        ((self.bits >> 0x18) & 0xf) as _
+    }
+    #[inline(always)]
+    #[doc = "Register format"]
+    pub const fn set_format(mut self, val: u8) -> Self {
+        self.bits &= !(0x7 << 0x1d);
+        self.bits |= (val as u32 & 0x7) << 0x1d;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Register format"]
+    pub const fn format(self) -> u8 {
+        ((self.bits >> 0x1d) & 0x7) as _
+    }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+#[doc = "Data cache operations by set-way"]
+pub struct DcswBits {
+    bits: u32,
+}
+impl Default for DcswBits {
+    fn default() -> Self {
+        unsafe { Self::from_bits_unchecked(0x0) }
+    }
+}
+impl DcswBits {
+    #[inline(always)]
+    pub const unsafe fn from_bits_unchecked(bits: u32) -> Self {
+        Self { bits }
+    }
+    #[inline(always)]
+    pub const fn to_bits(self) -> u32 {
+        self.bits
+    }
+    #[inline(always)]
+    #[doc = "Set/index that operation applies to"]
+    pub const fn set_set(mut self, val: u16) -> Self {
+        self.bits &= !(0x1ff << 0x5);
+        self.bits |= (val as u32 & 0x1ff) << 0x5;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Set/index that operation applies to"]
+    pub const fn set(self) -> u16 {
+        ((self.bits >> 0x5) & 0x1ff) as _
+    }
+    #[inline(always)]
+    #[doc = "Way that operation applies to"]
+    pub const fn set_way(mut self, val: u8) -> Self {
+        self.bits &= !(0x3 << 0x1e);
+        self.bits |= (val as u32 & 0x3) << 0x1e;
+        self
+    }
+    #[inline(always)]
+    #[doc = "Way that operation applies to"]
+    pub const fn way(self) -> u8 {
+        ((self.bits >> 0x1e) & 0x3) as _
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

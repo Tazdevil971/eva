@@ -7,10 +7,24 @@ use core::ptr::{self, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use core::time::Duration;
 
-use eva_kernel::{allocator, kprintln, port, rt};
+use eva_kernel::{allocator, kdbg, kprintln, port, rt};
+use eva_pac::scb::CsselrBits;
+
+pub mod gpio;
 
 unsafe extern "C" {
     unsafe fn SVCall();
+    unsafe fn WWDG();
+    unsafe fn PVD();
+    unsafe fn TAMP_STAMP();
+    unsafe fn RTC_WKUP();
+    unsafe fn FLASH();
+    unsafe fn RCC();
+    unsafe fn EXTI0();
+    unsafe fn EXTI1();
+    unsafe fn EXTI2();
+    unsafe fn EXTI3();
+    unsafe fn EXTI4();
 }
 
 #[unsafe(no_mangle)]
@@ -95,7 +109,7 @@ union Vector {
 
 #[unsafe(link_section = ".isr_vector.exceptions")]
 #[unsafe(no_mangle)]
-static __EXCEPTIONS: [Vector; 15] = [
+static __EXCEPTIONS: [Vector; 26] = [
     Vector { handler: Reset },
     Vector { handler: NMI },
     Vector { handler: HardFault },
@@ -113,6 +127,17 @@ static __EXCEPTIONS: [Vector; 15] = [
     Vector { reserved: 0 },
     Vector { handler: PendSV },
     Vector { handler: SysTick },
+    Vector { handler: WWDG },
+    Vector { handler: PVD },
+    Vector { handler: TAMP_STAMP },
+    Vector { handler: RTC_WKUP },
+    Vector { handler: FLASH },
+    Vector { handler: RCC },
+    Vector { handler: EXTI0 },
+    Vector { handler: EXTI1 },
+    Vector { handler: EXTI2 },
+    Vector { handler: EXTI3 },
+    Vector { handler: EXTI4 }
 ];
 
 unsafe extern "C" fn init_stage0() {
@@ -125,6 +150,7 @@ unsafe extern "C" fn init_stage0() {
         });
     }
 
+    // Initial clock configuration
     unsafe {
         // Enable HSI
         eva_pac::RCC.cr().update(|reg| reg.set_hsion(true));
@@ -156,9 +182,10 @@ unsafe extern "C" fn init_stage0() {
 
         // Reset to zero all interrupts
         eva_pac::RCC.cir().write(Default::default());
-
-        // Now configure SysClk to full speed
-        
+    }
+    
+    // 216MHz SysClock setup
+    unsafe {
         // Enable Power Control clock
         eva_pac::RCC.apb1enr().update(|reg| reg.set_pwren(true));
         // Config Voltage Scale 1
@@ -227,9 +254,9 @@ unsafe extern "C" fn init_stage0() {
         while !eva_pac::RCC.cr().read().pllrdy() {}
     
         // Configure flash prefetch, instruction cache, data cache and wait state
-        eva_pac::FLASH.acr().update(|reg| {
+        eva_pac::FLASH.acr().write({
             use eva_pac::flash::*;
-            reg.set_latency(LatencyVal::Ws7)
+            AcrBits::default().set_latency(LatencyVal::Ws7)
         });
         
         eva_pac::RCC.cfgr().update(|reg| {
@@ -327,6 +354,64 @@ extern "C" fn init_stage2(_: *mut ()) {
     kprintln!("Pivoting control to user code, good luck!");
     kprintln!("--- EVA BOOTLOG ---");
 
+    // Now perform extra needed configuration
+    unsafe {
+        // Enable power to all GPIO banks
+        eva_pac::RCC.ahb1enr().update(|reg| {
+            reg.set_gpioaen(true)
+                .set_gpioben(true)
+                .set_gpiocen(true)
+                .set_gpioden(true)
+                .set_gpioeen(true)
+                .set_gpiofen(true)
+                .set_gpiogen(true)
+                .set_gpiohen(true)
+                .set_gpioien(true)
+                .set_gpiojen(true)
+                .set_gpioken(true)
+        });
+        
+        eva_pac::RCC.apb2enr().update(|reg| {
+            reg.set_syscfgen(true)
+        });
+        
+        asm!("dsb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));
+        eva_pac::SCB.iciallu().write(0);
+        asm!("dsb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));
+        eva_pac::SCB.ccr().update(|reg| {
+            reg.set_ic(true)
+        });
+        asm!("dsb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));
+        
+        eva_pac::SCB.csselr().write({
+            use eva_pac::scb::CsselrBits;
+            CsselrBits::default()
+        });
+        asm!("dsb", options(nostack, preserves_flags));
+        
+        let ccsidr = eva_pac::SCB.ccsidr().read();
+        for set in 0..=ccsidr.num_set() {
+            for way in 0..=ccsidr.assoc() {
+                eva_pac::SCB.dcisw().write({
+                    use eva_pac::scb::DcswBits;
+                    DcswBits::default()
+                        .set_way(way as _)
+                        .set_set(set as _)
+                });
+            }
+        }
+        asm!("dsb", options(nostack, preserves_flags));
+        
+        eva_pac::SCB.ccr().update(|reg| {
+            reg.set_dc(true)
+        });
+        asm!("dsb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));
+    }
+    
     eva_kernel::kmain::invoke();
 }
 
@@ -634,9 +719,9 @@ unsafe extern "C" fn SysTick() {
     MS.fetch_add(10, Ordering::Relaxed);
 
     // Pend a yield
-    unsafe {
-        eva_pac::SCB
-            .icsr()
-            .write(eva_pac::scb::IcsrBits::default().set_pendsvset(true));
-    }
+    // unsafe {
+    //     eva_pac::SCB
+    //         .icsr()
+    //         .write(eva_pac::scb::IcsrBits::default().set_pendsvset(true));
+    // }
 }

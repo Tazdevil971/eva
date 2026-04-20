@@ -1,3 +1,9 @@
+[env]
+EVA_TARGET_CHIP = "stm32f767zi"
+
+[build]
+target = "./thumbv7em-eva-eabihf.json"
+
 [unstable]
 build-std = ["core", "alloc"]
 build-std-features = ["compiler-builtins-mem"]

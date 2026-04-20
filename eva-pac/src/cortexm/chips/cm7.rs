@@ -2,12 +2,16 @@
 use super::utils;
 #[path = "../modules/cm_regs.rs"]
 pub mod cm_regs;
+#[path = "../modules/nvic.rs"]
+pub mod nvic;
 #[path = "../modules/scb.rs"]
 pub mod scb;
 #[path = "../modules/syst.rs"]
 pub mod syst;
 #[doc = "System Timer"]
 pub const SYST: syst::Syst = unsafe { <syst::Syst>::from_addr(0xe000e010) };
+#[doc = "Nested Vector Interrupt Controller"]
+pub const NVIC: nvic::Nvic = unsafe { <nvic::Nvic>::from_addr(0xe000e100) };
 #[doc = "System Control Block"]
 pub const SCB: scb::Scb = unsafe { <scb::Scb>::from_addr(0xe000ed00) };
 #[doc = "Fault mask register"]
