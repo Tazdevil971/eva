@@ -6,6 +6,8 @@ extern crate eva_bsp_linux;
 #[cfg(target_arch = "arm")]
 extern crate eva_bsp_stm32f767;
 
+extern crate eva_libc;
+
 use core::panic::PanicInfo;
 
 #[panic_handler]

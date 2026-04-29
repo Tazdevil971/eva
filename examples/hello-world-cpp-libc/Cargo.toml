@@ -1,5 +1,5 @@
 [package]
-name = "eva-sync-queue-c"
+name = "eva-hello-world-cpp-libc"
 version = "0.1.0"
 edition = "2024"
 authors = ["Davide Mor <tazdevil971@gmail.com>"]
@@ -7,6 +7,7 @@ authors = ["Davide Mor <tazdevil971@gmail.com>"]
 [dependencies]
 eva-kernel = { workspace = true }
 eva-abi = { workspace = true }
+eva-libc = { workspace = true }
 
 # Hack to not have to switch BSP target every time
 [target.'cfg(target_arch = "x86_64")'.dependencies]

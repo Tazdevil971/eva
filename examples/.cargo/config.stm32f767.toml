@@ -1,5 +1,6 @@
 [env]
 EVA_TARGET_CHIP = "stm32f767zi"
+CROSS_COMPILE = "arm-none-eabi"
 
 [build]
 target = "../thumbv7em-eva-eabihf.json"
@@ -17,3 +18,4 @@ codegen-units = 1
 build-std = ["core", "alloc", "std", "panic_abort"]
 # build-std = ["core", "alloc"]
 build-std-features = ["compiler-builtins-mem"]
+json-target-spec = true 

@@ -11,3 +11,4 @@ strip = true
 [unstable]
 build-std = ["core", "alloc", "std", "panic_abort"]
 build-std-features = ["compiler-builtins-mem"]
+json-target-spec = true 

@@ -5,6 +5,11 @@ PHDRS
     ram PT_LOAD FLAGS(6);
 }
 
+EXTERN(__eva_default_init);
+PROVIDE(_init = __eva_default_init);
+EXTERN(__eva_default_fini);
+PROVIDE(_fini = __eva_default_fini);
+
 EXTERN(_start)
 ENTRY(_start)
 
@@ -26,6 +31,23 @@ SECTIONS
     {
         *(.rodata)
         *(.rodata.*)
+        
+        . = ALIGN(8);
+        __preinit_array_start = .;
+        KEEP (*(.preinit_array))
+        __preinit_array_end = .;
+
+        . = ALIGN(8);
+        __init_array_start = .;
+        KEEP (*(SORT(.init_array.*)))
+        KEEP (*(.init_array))
+        __init_array_end = .;
+
+        . = ALIGN(8);
+        __fini_array_start = .;
+        KEEP (*(.fini_array))
+        KEEP (*(SORT(.fini_array.*)))
+        __fini_array_end = .; 
     } :rom
 
     .eh_frame : ALIGN(8) { 

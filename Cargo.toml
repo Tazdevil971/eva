@@ -3,11 +3,15 @@ resolver = "3"
 members = [
     "eva-pac",
     "eva-abi",
+    "eva-libc",
     "eva-kernel",
     "eva-utils",
     "eva-bsp/stm32f767",
     "eva-bsp/linux",
     "examples/hello-world",
+    "examples/hello-world-std",
+    "examples/hello-world-c-libc",
+    "examples/hello-world-cpp-libc",
     "examples/sync-queue",
     "examples/sync-queue-std",
     "examples/sync-queue-c",
@@ -21,6 +25,7 @@ members = [
 
 [workspace.dependencies]
 eva-abi = { path = "eva-abi" }
+eva-libc = { path = "eva-libc" }
 eva-pac = { path = "eva-pac" }
 eva-kernel = { path = "eva-kernel" }
 eva-utils = { path = "eva-utils" }

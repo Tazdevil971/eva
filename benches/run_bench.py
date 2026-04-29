@@ -123,24 +123,23 @@ def run():
     for target in TARGETS:
         for profile in PROFILE:
             flash_board(target, profile)
-            time.sleep(1)
+            time.sleep(3)
             raw = capture_pulse()
             us = raw * 1000000
             cycles = int(raw * 216000000)
             
             results[(target, profile)] = f"{us}us / {cycles}cycles"
-            pprint.pprint(results)
     
     for target in MIOSIX_TARGETS:
         flash_board_miosix(target)
-        time.sleep(1)
+        time.sleep(3)
         raw = capture_pulse()
         us = raw * 1000000
         cycles = int(raw * 216000000)
         
         results[(target, "miosix")] = f"{us}us / {cycles}cycles"
-        pprint.pprint(results)
     
-    pprint.pprint(results)
+    for (target, profile), value in results.items():
+        print(f"{target} / {profile}: {value}")
     
 run()

@@ -56,8 +56,8 @@ unsafe extern "C" fn init_stage1() {
     // Initialize allocator
     {
         unsafe extern "C" {
-            unsafe static mut __heap_start: u8;
-            unsafe static mut __heap_end: u8;
+            unsafe static mut __heap_start: ();
+            unsafe static mut __heap_end: ();
         }
 
         unsafe {

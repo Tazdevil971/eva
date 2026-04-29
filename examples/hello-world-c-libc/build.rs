@@ -2,12 +2,8 @@ fn main() {
     println!("cargo::rerun-if-changed=src/main.c");
 
     cc::Build::new()
-        .target("thumbv7em-none-eabihf")
-        .flag("-ffreestanding")
         .flag("-fno-stack-protector")
         .include(std::env::var_os("DEP_EVA_INCLUDE").unwrap())
         .file("src/main.c")
-        .compile("sync-queue-c");
+        .compile("hello-world-c-libc");
 }
-
-

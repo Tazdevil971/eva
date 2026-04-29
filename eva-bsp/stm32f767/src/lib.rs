@@ -1,14 +1,12 @@
 #![no_std]
 use core::alloc::Layout;
 use core::arch::{asm, naked_asm};
-use core::fmt;
 use core::mem::size_of;
 use core::ptr::{self, addr_of_mut};
 use core::sync::atomic::{AtomicU32, Ordering, compiler_fence};
 use core::time::Duration;
 
-use eva_kernel::{allocator, kdbg, kprintln, port, rt};
-use eva_pac::scb::CsselrBits;
+use eva_kernel::{allocator, kprintln, port, rt};
 
 pub mod gpio;
 
@@ -375,7 +373,7 @@ extern "C" fn init_stage2(_: *mut ()) {
             reg.set_syscfgen(true)
         });
         
-        asm!("dsb", options(nostack, preserves_flags));
+        /*asm!("dsb", options(nostack, preserves_flags));
         asm!("isb", options(nostack, preserves_flags));
         eva_pac::SCB.iciallu().write(0);
         asm!("dsb", options(nostack, preserves_flags));
@@ -409,7 +407,7 @@ extern "C" fn init_stage2(_: *mut ()) {
             reg.set_dc(true)
         });
         asm!("dsb", options(nostack, preserves_flags));
-        asm!("isb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));*/
     }
     
     eva_kernel::kmain::invoke();
@@ -478,26 +476,31 @@ critical_section::set_impl!(Cs);
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn NMI() {
+    // kprintln!("NMI");
     loop {}
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn HardFault() {
+    kprintln!("HardFault");
     loop {}
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn MemManage() {
+    kprintln!("MemManage");
     loop {}
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn BusFault() {
+    kprintln!("BusFault");
     loop {}
 }
 
 #[unsafe(no_mangle)]
 unsafe extern "C" fn UsageFault() {
+    kprintln!("UsageFault");
     loop {}
 }
 

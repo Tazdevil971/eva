@@ -18,7 +18,11 @@
     "relocation-model": "static",
     "target-pointer-width": 32,
     "os": "eva",
-    "late-link-args": {
-        "gnu": ["-Tlink.x"]
+    "pre-link-args": {
+        "gnu": [
+          "-Tlink.x",
+          "--wrap=_malloc_r",
+          "--wrap=_free_r"
+        ]
     }
 }

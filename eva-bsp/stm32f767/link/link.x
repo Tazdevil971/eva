@@ -9,6 +9,11 @@ MEMORY
 
 INCLUDE "exceptions.x"
 
+EXTERN(__eva_default_init);
+PROVIDE(_init = __eva_default_init);
+EXTERN(__eva_default_fini);
+PROVIDE(_fini = __eva_default_fini);
+
 EXTERN(Reset);
 ENTRY(Reset);
 
@@ -39,13 +44,39 @@ SECTIONS
     {
         *(.rodata)
         *(.rodata.*)
+
+        . = ALIGN(4);
+        __preinit_array_start = .;
+        KEEP (*(.preinit_array))
+        __preinit_array_end = .;
+
+        . = ALIGN(4);
+        __init_array_start = .;
+        KEEP (*(SORT(.init_array.*)))
+        KEEP (*(.init_array))
+        __init_array_end = .;
+
+        . = ALIGN(4);
+        __fini_array_start = .;
+        KEEP (*(.fini_array))
+        KEEP (*(SORT(.fini_array.*)))
+        __fini_array_end = .;      
     } > FLASH
+
+    __exidx_start = .;
+    .ARM.exidx :
+    {
+        *(.ARM.exidx* .gnu.linkonce.armexidx.*)
+    } > FLASH
+    __exidx_end = .;
 
     .data : ALIGN(8) 
     {
+        _data = .;
         __sdata = .;
         *(.data)
         *(.data.*)
+        *(.gnu.linkonce.d.*)
         __edata = .;
     } > SRAM AT > FLASH
     __sidata = LOADADDR(.data);
@@ -55,6 +86,8 @@ SECTIONS
         __sbss = .;
         *(.bss)
         *(.bss.*)
+        *(.gnu.linkonce.b.*)
+        *(COMMON)
         . = ALIGN(8);
         __ebss = .;
     } > SRAM

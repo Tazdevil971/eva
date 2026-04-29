@@ -141,6 +141,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "eva-hello-world-c-libc"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "eva-abi",
+ "eva-bsp-linux",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-libc",
+]
+
+[[package]]
+name = "eva-hello-world-cpp-libc"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "eva-abi",
+ "eva-bsp-linux",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-libc",
+]
+
+[[package]]
+name = "eva-hello-world-std"
+version = "0.1.0"
+dependencies = [
+ "eva-bsp-linux",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+]
+
+[[package]]
 name = "eva-kernel"
 version = "0.1.0"
 dependencies = [
@@ -153,6 +186,14 @@ dependencies = [
  "rtt-target",
  "scopeguard",
  "smallvec",
+]
+
+[[package]]
+name = "eva-libc"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "eva-abi",
 ]
 
 [[package]]
@@ -175,6 +216,7 @@ dependencies = [
  "cc",
  "eva-abi",
  "eva-bsp-linux",
+ "eva-bsp-stm32f767",
  "eva-kernel",
 ]
 

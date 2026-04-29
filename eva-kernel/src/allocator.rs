@@ -11,7 +11,7 @@ struct KAlloc(PauseCell<RefCell<Heap>>);
 
 impl KAlloc {
     unsafe fn new(start: *mut u8, end: *mut u8) -> Self {
-        let heap = unsafe { Heap::new(start, end as usize - start as usize) };
+        let heap = unsafe { Heap::new(start, end.byte_offset_from_unsigned(start)) };
 
         Self::from_heap(heap)
     }
