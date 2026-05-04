@@ -267,6 +267,47 @@ unsafe extern "C" fn init_stage0() {
             while eva_pac::RCC.cfgr().read().sws() != SwVal::Pll1P {}
         }
     }
+
+    // Initialize caches
+    unsafe {
+        // icache setup
+        asm!("dsb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));
+        eva_pac::SCB.iciallu().write(0);
+        asm!("dsb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));
+        eva_pac::SCB.ccr().update(|reg| {
+            reg.set_ic(true)
+        });
+        asm!("dsb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));
+
+        // dcache setup
+        eva_pac::SCB.csselr().write({
+            use eva_pac::scb::CsselrBits;
+            CsselrBits::default()
+        });
+        asm!("dsb", options(nostack, preserves_flags));
+        
+        let ccsidr = eva_pac::SCB.ccsidr().read();
+        for set in 0..=ccsidr.num_set() {
+            for way in 0..=ccsidr.assoc() {
+                eva_pac::SCB.dcisw().write({
+                    use eva_pac::scb::DcswBits;
+                    DcswBits::default()
+                        .set_way(way as _)
+                        .set_set(set as _)
+                });
+            }
+        }
+        asm!("dsb", options(nostack, preserves_flags));
+        
+        eva_pac::SCB.ccr().update(|reg| {
+            reg.set_dc(true)
+        });
+        asm!("dsb", options(nostack, preserves_flags));
+        asm!("isb", options(nostack, preserves_flags));
+    }
 }
 
 unsafe extern "C" fn init_stage1() {
@@ -372,44 +413,8 @@ extern "C" fn init_stage2(_: *mut ()) {
         eva_pac::RCC.apb2enr().update(|reg| {
             reg.set_syscfgen(true)
         });
-        
-        /*asm!("dsb", options(nostack, preserves_flags));
-        asm!("isb", options(nostack, preserves_flags));
-        eva_pac::SCB.iciallu().write(0);
-        asm!("dsb", options(nostack, preserves_flags));
-        asm!("isb", options(nostack, preserves_flags));
-        eva_pac::SCB.ccr().update(|reg| {
-            reg.set_ic(true)
-        });
-        asm!("dsb", options(nostack, preserves_flags));
-        asm!("isb", options(nostack, preserves_flags));
-        
-        eva_pac::SCB.csselr().write({
-            use eva_pac::scb::CsselrBits;
-            CsselrBits::default()
-        });
-        asm!("dsb", options(nostack, preserves_flags));
-        
-        let ccsidr = eva_pac::SCB.ccsidr().read();
-        for set in 0..=ccsidr.num_set() {
-            for way in 0..=ccsidr.assoc() {
-                eva_pac::SCB.dcisw().write({
-                    use eva_pac::scb::DcswBits;
-                    DcswBits::default()
-                        .set_way(way as _)
-                        .set_set(set as _)
-                });
-            }
-        }
-        asm!("dsb", options(nostack, preserves_flags));
-        
-        eva_pac::SCB.ccr().update(|reg| {
-            reg.set_dc(true)
-        });
-        asm!("dsb", options(nostack, preserves_flags));
-        asm!("isb", options(nostack, preserves_flags));*/
     }
-    
+
     eva_kernel::kmain::invoke();
 }
 
