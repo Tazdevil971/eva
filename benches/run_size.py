@@ -27,7 +27,9 @@ def get_code_size(target, profile):
 
 TARGETS = [
     "eva-hello-world",
-    "eva-hello-world-std"
+    "eva-hello-world-std",
+    "eva-hello-world-c-libc",
+    "eva-hello-world-cpp-libc",
 ]
 
 PROFILE = [

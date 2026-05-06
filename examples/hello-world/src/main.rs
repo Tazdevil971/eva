@@ -13,7 +13,7 @@ use eva_kernel::kprintln;
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     eva_kernel::rt::abort();
-    kprintln!("{}", info);
+    // kprintln!("{}", info);
 
     loop {}
 }

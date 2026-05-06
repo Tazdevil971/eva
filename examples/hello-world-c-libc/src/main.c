@@ -1,6 +1,6 @@
 #include <stdio.h>
 
 int main() {
-    printf("Hi from C! %d\n", 10);
+    printf("Hello, world!\n");
     return 0;
 }
