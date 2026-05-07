@@ -186,7 +186,7 @@ pub fn enable_mco2_out(div: eva_pac::rcc::McopreVal) {
     set_mode(Port::C, 9, Mode::Alternate(0), Pull::None, Speed::VeryHigh);
 }
 
-pub fn enable_irq(port: Port, num: usize, trigger: Trigger, prio: usize) {
+pub fn enable_irq(port: Port, num: usize, trigger: Trigger, prio: u8) {
     unsafe {
         eva_pac::SYSCFG.exticr(num / 4).update(|reg| {
             reg.set_exti(num % 4, port_to_exti_pin(port))
@@ -215,7 +215,7 @@ pub fn enable_irq(port: Port, num: usize, trigger: Trigger, prio: usize) {
                 .set_setena(irqn & 0x1f, true)
         });
         
-        eva_pac::NVIC.ip(irqn).write(0);
+        eva_pac::NVIC.ip(irqn).write(prio);
     }
 }
 

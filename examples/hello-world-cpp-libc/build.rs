@@ -2,6 +2,7 @@ fn main() {
     println!("cargo::rerun-if-changed=src/main.cpp");
 
     cc::Build::new()
+        .pic(false)
         .flag("-fno-exceptions")
         .flag("-fno-rtti")
         .flag("-fno-stack-protector")

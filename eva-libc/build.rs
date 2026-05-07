@@ -8,6 +8,7 @@ fn main() {
     println!("cargo::rerun-if-changed=src/stub.c");
     
     cc::Build::new()
+        .pic(false)
         .flag("-fno-stack-protector")
         .include(std::env::var_os("DEP_EVA_INCLUDE").unwrap())
         .file("src/stub.c")
