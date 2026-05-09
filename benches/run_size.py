@@ -33,7 +33,7 @@ TARGETS = [
 ]
 
 PROFILE = [
-    "release",
+    # "release",
     "releaseplus"
 ]
 

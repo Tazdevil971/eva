@@ -1,7 +1,7 @@
 import subprocess
 import time
-import pprint
 from pathlib import Path
+import json
 
 def flash_board(target, profile):
     subprocess.run(
@@ -10,7 +10,7 @@ def flash_board(target, profile):
             "--chip", "STM32F767ZITx",
            "--", 
             "--profile", profile,
-            "--package", target,
+            "--package", f"bench-{target}",
             "-Zjson-target-spec"
         ],
         # stdout=subprocess.DEVNULL, 
@@ -89,18 +89,18 @@ def capture_pulse():
     return pulses[-1]
 
 def capture_average():
-    pulse = 0
-    for _ in range(0, 3):
-        pulse += capture_pulse()
-    return pulse / 3
+    pulse = []
+    for _ in range(0, 10):
+        pulse.append(capture_pulse())
+    return pulse
 
 TARGETS = [
-    "bench-yield",
-    "bench-condvar",
-    "bench-mutex-lock",
-    "bench-mutex-unlock",
-    "bench-mutex-uncont",
-    "bench-wake-from-irq"
+    "yield",
+    "condvar",
+    "mutex-lock",
+    "mutex-unlock",
+    "mutex-uncont",
+    "wake-from-irq"
 ]
 
 MIOSIX_TARGETS = [
@@ -119,27 +119,18 @@ PROFILE = [
 
 def run():
     results = {}
-    
-    for target in TARGETS:
-        for profile in PROFILE:
+
+    for profile in PROFILE:
+        results[f"eva/{profile}"] = {}
+        for target in TARGETS:
             flash_board(target, profile)
             time.sleep(3)
-            raw = capture_pulse()
-            us = raw * 1000000
-            cycles = int(raw * 216000000)
-            
-            results[(target, profile)] = f"{us}us / {cycles}cycles"
+            results[f"eva/{profile}"][target] = capture_average()
     
     for target in MIOSIX_TARGETS:
         flash_board_miosix(target)
-        time.sleep(3)
-        raw = capture_pulse()
-        us = raw * 1000000
-        cycles = int(raw * 216000000)
-        
-        results[(target, "miosix")] = f"{us}us / {cycles}cycles"
-    
-    for (target, profile), value in results.items():
-        print(f"{target} / {profile}: {value}")
+        results["miosix"][target] = capture_average()
+
+    print(json.dumps(results))
     
 run()
