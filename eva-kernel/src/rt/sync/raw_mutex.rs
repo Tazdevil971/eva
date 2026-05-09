@@ -48,7 +48,7 @@ impl RawMutex {
     pub unsafe fn unlock_paused(&self, token: PauseToken) {
         let waked = self.wait_list.wakeup_one(token);
         if !waked {
-            // TODO(davide.mor): Review memory orderings
+            // TODO: Review memory orderings
             self.locked.store(false, Ordering::Release);
         }
     }
@@ -67,7 +67,7 @@ impl RawMutex {
 
     #[unsafe(export_name = "eva_rt_sync_mutex_try_lock")]
     pub fn try_lock(&self) -> bool {
-        // TODO(davide.mor): Review memory orderings
+        // TODO: Review memory orderings
         self.locked
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
@@ -82,7 +82,7 @@ impl RawMutex {
 
     #[unsafe(export_name = "eva_rt_sync_mutex_is_locked")]
     pub fn is_locked(&self) -> bool {
-        // TODO(davide.mor): Review memory orderings
+        // TODO: Review memory orderings
         self.locked.load(Ordering::Relaxed)
     }
 

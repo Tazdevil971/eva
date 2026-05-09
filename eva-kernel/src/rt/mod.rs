@@ -103,7 +103,7 @@ pub fn yield_now() {
 }
 
 fn current_raw() -> ThreadPtr {
-    // TODO(davide.mor): Review memory ordering here
+    // TODO: Review memory ordering here
     SCHEDULER
         .current
         .load(Ordering::Relaxed)

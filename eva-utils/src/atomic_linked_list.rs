@@ -57,7 +57,7 @@ impl<A: Adapter + Clone> AtomicLinkedList<A> {
 impl<A: Adapter + Clone> AtomicLinkedList<A> {
     /// Check if this list is empty.
     pub fn is_empty(&self) -> bool {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         self.head.load(Ordering::SeqCst).is_null()
     }
 
@@ -74,7 +74,7 @@ impl<A: Adapter + Clone> AtomicLinkedList<A> {
                 self.node_to_links(node).set_next(NonNull::new(head));
             }
 
-            // TODO(davide.mor): Review memory ordering here
+            // TODO: Review memory ordering here
             // Try to insert the node
             match self.head.compare_exchange(
                 head,
@@ -93,7 +93,7 @@ impl<A: Adapter + Clone> AtomicLinkedList<A> {
     where
         A: Clone,
     {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         let head = self.head.swap(ptr::null_mut(), Ordering::SeqCst);
         SinglyLinkedList {
             head: NonNull::new(head),
@@ -104,7 +104,7 @@ impl<A: Adapter + Clone> AtomicLinkedList<A> {
 
 impl<A: Adapter + Clone> Drop for AtomicLinkedList<A> {
     fn drop(&mut self) {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         let head = self.head.load(Ordering::SeqCst);
         let _ = SinglyLinkedList {
             head: NonNull::new(head),

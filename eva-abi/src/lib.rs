@@ -245,15 +245,15 @@ unsafe extern "Rust" {
     pub unsafe fn eva_rt_detach_unchecked(thread: Thread) -> Result<(), OsError>;
 
     // Thread getters
-    // TODO(davide.mor): Better API?
+    // TODO: Better API?
     // pub unsafe fn eva_rt_get_name(thread: Thread) -> *const c_char;
-    // TODO(davide.mor): Again, API sucks
+    // TODO: Again, API sucks
     // pub unsafe fn eva_rt_get_priority(thread: Thread) -> Priority;
     // pub unsafe fn eva_rt_get_tid(thread: Thread) -> ThreadId;
     // pub unsafe fn eva_rt_get_priority_unchecked(thread: Thread) -> Priority;
     // pub unsafe fn eva_rt_get_tid_unchecked(thread: Thread) -> ThreadId;
 
-    // TODO(davide.mor): Better API?
+    // TODO: Better API?
     // pub unsafe fn eva_rt_get_current_name() -> *const c_char;
     pub safe fn eva_rt_get_current_priority() -> Priority;
     pub safe fn eva_rt_get_current_tid() -> ThreadId;

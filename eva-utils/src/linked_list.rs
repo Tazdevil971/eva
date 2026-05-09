@@ -95,28 +95,28 @@ impl<T> LinkOps for AtomicLink<T> {
     type Value = T;
 
     fn is_linked(&self) -> bool {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         self.next.load(Ordering::Relaxed) != Self::UNLINKED_MARKER
     }
 
     fn get_next(&self) -> Option<NonNull<Self::Value>> {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         NonNull::new(self.next.load(Ordering::Relaxed))
     }
 
     fn get_prev(&self) -> Option<NonNull<Self::Value>> {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         NonNull::new(self.prev.load(Ordering::Relaxed))
     }
 
     unsafe fn set_unlinked(&self) {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         self.next.store(Self::UNLINKED_MARKER, Ordering::Relaxed);
         self.prev.store(Self::UNLINKED_MARKER, Ordering::Relaxed);
     }
 
     unsafe fn set_next(&self, ptr: Option<NonNull<Self::Value>>) {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         self.next.store(
             ptr.map(NonNull::as_ptr).unwrap_or(ptr::null_mut()),
             Ordering::Relaxed,
@@ -124,7 +124,7 @@ impl<T> LinkOps for AtomicLink<T> {
     }
 
     unsafe fn set_prev(&self, ptr: Option<NonNull<Self::Value>>) {
-        // TODO(davide.mor): Review memory ordering here
+        // TODO: Review memory ordering here
         self.prev.store(
             ptr.map(NonNull::as_ptr).unwrap_or(ptr::null_mut()),
             Ordering::Relaxed,

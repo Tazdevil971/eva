@@ -15,7 +15,7 @@ static PEND: AtomicBool = AtomicBool::new(false);
 /// Check if the scheduler is paused.
 #[unsafe(export_name = "eva_rt_is_paused")]
 pub fn is_paused() -> bool {
-    // TODO(davide.mor): Review memory ordering
+    // TODO: Review memory ordering
     PAUSED.load(Ordering::SeqCst)
 }
 
@@ -23,7 +23,7 @@ pub fn is_paused() -> bool {
 #[unsafe(export_name = "eva_rt_pause")]
 pub fn pause() {
     compiler_fence(Ordering::SeqCst);
-    // TODO(davide.mor): Review memory ordering
+    // TODO: Review memory ordering
     PAUSED.store(true, Ordering::SeqCst);
 }
 
@@ -32,10 +32,10 @@ pub fn pause() {
 /// - No `PauseToken` must exist at this point.
 #[unsafe(export_name = "eva_rt_unpause")]
 pub unsafe fn unpause() {
-    // TODO(davide.mor): Review memory ordering
+    // TODO: Review memory ordering
     PAUSED.store(false, Ordering::SeqCst);
 
-    // TODO(davide.mor): Review memory ordering
+    // TODO: Review memory ordering
     if PEND.load(Ordering::SeqCst) {
         // We have a pended yield
         rt::yield_now();
@@ -48,19 +48,19 @@ pub unsafe fn unpause() {
 #[unsafe(export_name = "eva_rt_pend_yield")]
 pub fn pend_yield(_token: PauseToken) {
     // TODO: Check current status?
-    // TODO(davide.mor): Review memory ordering
+    // TODO: Review memory ordering
     PEND.store(true, Ordering::SeqCst);
 }
 
 /// Try to pause the scheduler.
 #[unsafe(export_name = "eva_rt_try_pause")]
 pub fn try_pause() -> bool {
-    // TODO(davide.mor): Review memory ordering
+    // TODO: Review memory ordering
     if PAUSED.load(Ordering::SeqCst) {
         false
     } else {
         compiler_fence(Ordering::SeqCst);
-        // TODO(davide.mor): Review memory ordering
+        // TODO: Review memory ordering
         PAUSED.store(true, Ordering::SeqCst);
         true
     }
@@ -71,15 +71,15 @@ pub fn try_pause() -> bool {
 /// - No `PauseToken` must exist at this point.
 #[unsafe(export_name = "eva_rt_try_unpause")]
 pub unsafe fn try_unpause() -> bool {
-    // TODO(davide.mor): Review memory ordering
+    // TODO: Review memory ordering
     if PAUSED.load(Ordering::SeqCst) {
         // Scheduler was not paused previously
         false
     } else {
-        // TODO(davide.mor): Review memory ordering
+        // TODO: Review memory ordering
         PAUSED.store(true, Ordering::SeqCst);
 
-        // TODO(davide.mor): Review memory ordering
+        // TODO: Review memory ordering
         if PEND.load(Ordering::SeqCst) {
             rt::yield_now();
         }
@@ -93,22 +93,22 @@ pub(super) fn run_scheduler<F>(f: F)
 where
     F: FnOnce(PauseToken),
 {
-    // TODO(davide.mor): Review memory ordering
+    // TODO: Review memory ordering
     if PAUSED.load(Ordering::SeqCst) {
         // The system is already paused, pend
-        // TODO(davide.mor): Review memory ordering
+        // TODO: Review memory ordering
         PEND.store(true, Ordering::SeqCst);
     } else {
         // Enable the paused state
-        // TODO(davide.mor): Review memory ordering
+        // TODO: Review memory ordering
         PAUSED.store(true, Ordering::SeqCst);
 
         // Clear any pending state unconditionally
-        // TODO(davide.mor): Review memory ordering
+        // TODO: Review memory ordering
         PEND.store(false, Ordering::SeqCst);
 
         defer! {
-            // TODO(davide.mor): Review memory ordering
+            // TODO: Review memory ordering
             PAUSED.store(false, Ordering::SeqCst);
         }
 
