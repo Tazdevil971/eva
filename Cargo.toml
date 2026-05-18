@@ -21,6 +21,7 @@ members = [
     "benches/mutex-unlock",
     "benches/mutex-uncont",
     "benches/wake-from-irq",
+    "benches/irq-latency"
 ]
 
 [workspace.dependencies]

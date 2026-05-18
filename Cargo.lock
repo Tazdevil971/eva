@@ -19,6 +19,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench-irq-latency"
+version = "0.1.0"
+dependencies = [
+ "eva-abi",
+ "eva-bsp-stm32f767",
+ "eva-kernel",
+ "eva-pac",
+]
+
+[[package]]
 name = "bench-mutex-lock"
 version = "0.1.0"
 dependencies = [
