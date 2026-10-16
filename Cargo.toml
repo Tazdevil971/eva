@@ -14,14 +14,7 @@ members = [
     "examples/hello-world-cpp-libc",
     "examples/sync-queue",
     "examples/sync-queue-std",
-    "examples/sync-queue-c",
-    "benches/yield",
-    "benches/condvar",
-    "benches/mutex-lock",
-    "benches/mutex-unlock",
-    "benches/mutex-uncont",
-    "benches/wake-from-irq",
-    "benches/irq-latency"
+    "examples/sync-queue-c"
 ]
 
 [workspace.dependencies]

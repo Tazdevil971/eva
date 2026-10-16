@@ -1,4 +1,13 @@
 {
+  nixConfig = {
+    extra-substituters = [
+      "https://tazdevil971-eva.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "tazdevil971-eva.cachix.org-1:yLzq8bTbCCpOG0GXFenpPBgYFyIfBj9psMEP82Qv1K4="
+    ];
+  };
+  
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
     utils.url = "github:numtide/flake-utils";
